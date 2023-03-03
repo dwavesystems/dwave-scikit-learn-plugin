@@ -1,7 +1,7 @@
-[![PyPI](https://img.shields.io/pypi/v/dwave-sklearn-plugin.svg)](https://pypi.python.org/pypi/dwave-sklearn-plugin)
-[![CircleCI](https://dl.circleci.com/status-badge/img/gh/dwavesystems/dwave-sklearn-plugin/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/dwavesystems/dwave-sklearn-plugin)
+[![PyPI](https://img.shields.io/pypi/v/dwave-scikit-learn-plugin.svg)](https://pypi.python.org/pypi/dwave-scikit-learn-plugin)
+[![CircleCI](https://dl.circleci.com/status-badge/img/gh/dwavesystems/dwave-scikit-learn-plugin/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/dwavesystems/dwave-scikit-learn-plugin)
 
-# dwave-sklearn-plugin
+# dwave-scikit-learn-plugin
 
 ## Examples
 
@@ -10,7 +10,7 @@
 To install the core package:
 
 ```bash
-pip install dwave-sklearn-plugin
+pip install dwave-scikit-learn-plugin
 ```
 
 ## License
@@ -24,10 +24,10 @@ has guidelines for contributing to Ocean packages.
 
 ### Release Notes
 
-**dwave-sklearn-plugin** makes use of [reno](https://docs.openstack.org/reno/) to manage its
+**dwave-scikit-learn-plugin** makes use of [reno](https://docs.openstack.org/reno/) to manage its
 release notes.
 
-When making a contribution to **dwave-sklearn-plugin** that will affect users, create a new
+When making a contribution to **dwave-scikit-learn-plugin** that will affect users, create a new
 release note file by running
 
 ```bash
