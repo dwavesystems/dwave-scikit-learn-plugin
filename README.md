@@ -12,7 +12,7 @@ The main class is a `sklearn.feature_selection.SelectorMixin` and so can be used
 A minimal example of using the hybrid feature selection: 
 
 ```python
-from dwave.plugins.sklearn.transformers import HybridFeatureSelection
+from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
 import numpy as np
 
 # generate uniformly random data, 10,000 observations and 300 features 
@@ -21,7 +21,7 @@ data = np.random.uniform(-10,10, size = (10000,300))
 outcome =  np.array([int(i) for i in (np.random.uniform(0,1, size = (10000,1)) > .5)])
 
 # instantiate the feature selection class
-selector = HybridFeatureSelection()
+selector = SelectFromQuadraticModel()
 
 # do hybrid feature selection 
 data_transformed = selector.fit_transform(data, outcome)
@@ -31,7 +31,7 @@ Sometimes the resulting [constrained quadratic model](https://docs.ocean.dwavesy
 
 ```python
 # instantiate the feature selection class with a longer time limit 
-selector = HybridFeatureSelection(time_limit = 200) 
+selector = SelectFromQuadraticModel(time_limit = 200) 
 ```
 
 ## Installation
