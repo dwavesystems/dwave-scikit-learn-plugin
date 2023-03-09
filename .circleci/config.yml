@@ -59,7 +59,9 @@ jobs:
 
       - run: &run-python-tests
           name: Run Python tests
-          command: python -m unittest
+          command: |
+            . env/bin/activate
+            python -m unittest
 
   test-macos:
     parameters:
