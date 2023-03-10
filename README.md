@@ -1,7 +1,7 @@
 [![PyPI](https://img.shields.io/pypi/v/dwave-scikit-learn-plugin.svg)](https://pypi.python.org/pypi/dwave-scikit-learn-plugin)
 [![CircleCI](https://dl.circleci.com/status-badge/img/gh/dwavesystems/dwave-scikit-learn-plugin/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/dwavesystems/dwave-scikit-learn-plugin)
 
-# dwave-scikit-learn-plugin
+# D-Wave `scikit-learn` Plugin
 
 This package provides a `scikit-learn` transformer for 
 [feature selection](https://en.wikipedia.org/wiki/Feature_selection) using a quantum-classical hybrid solver. 
