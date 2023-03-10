@@ -26,7 +26,7 @@ outcome =  np.array([int(i) for i in (np.random.uniform(0,1, size = (10000,1)) >
 # instantiate the feature selection class
 selector = SelectFromQuadraticModel()
 
-# do hybrid feature selection 
+# solve the feature-selection problem 
 data_transformed = selector.fit_transform(data, outcome)
 ```
 
