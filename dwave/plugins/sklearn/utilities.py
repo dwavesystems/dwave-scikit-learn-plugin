@@ -163,12 +163,7 @@ def cov(m: npt.ArrayLike, *,
 
     X_T = X.T
 
-    if out is None:
-        out = np.empty((X.shape[0], X.shape[0]), dtype=X.dtype)
-    elif out.shape[0] != X.shape[0] or out.shape[0] != out.shape[1]:
-        raise ValueError(f"out must be a ({X.shape[0]}, {X.shape[0]}) array")
-
-    dot_2d(X, X_T.conj(), out=out)
+    out = dot_2d(X, X_T.conj(), out=out)
     out *= np.true_divide(1, fact)
 
     if hasattr(out, "flush"):
@@ -210,6 +205,8 @@ def dot_2d(a: npt.ArrayLike, b: npt.ArrayLike, *,
 
     if out is None:
         out = np.empty((a.shape[0], b.shape[1]), dtype=np.result_type(a, b))
+    elif out.shape[0] != a.shape[0] or out.shape[1] != b.shape[1]:
+        raise ValueError(f"out must be a ({a.shape[0]}, {b.shape[1]}) array")
 
     is_memmap = hasattr(out, "flush")
 
