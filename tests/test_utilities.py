@@ -72,14 +72,14 @@ class TestCorrCoef(unittest.TestCase):
         size = (1_000, 100)
         # size = (25_000, 100_000)  # The max size we want to support
 
-        with tempfile.TemporaryDirectory() as dirname:
-            X = np.memmap(os.path.join(dirname, "X"), "float64", mode="w+", shape=size)
-            X[:, :10] = rng.uniform(size=(X.shape[0], 10))  # so we don't get stddev = 0
-            X[:, 10:] = 1
-            out = np.memmap(os.path.join(dirname, "c"),
-                            "float64", mode="w+", shape=(X.shape[0], X.shape[0]))
+        with tempfile.TemporaryFile() as fX:
+            with tempfile.NamedTemporaryFile() as fout:
+                X = np.memmap(fX, "float64", mode="w+", shape=size)
+                X[:, :10] = rng.uniform(size=(X.shape[0], 10))  # so we don't get stddev = 0
+                X[:, 10:] = 1
+                out = np.memmap(fout, "float64", mode="w+", shape=(X.shape[0], X.shape[0]))
 
-            corrcoef(X, rowvar=True, out=out, copy=False)
+                corrcoef(X, rowvar=True, out=out, copy=False)
 
     # the following tests are adapted from NumPy
 
@@ -123,13 +123,13 @@ class TestCov(unittest.TestCase):
         size = (1_000, 100)
         # size = (25_000, 100_000)  # The max size we want to support
 
-        with tempfile.TemporaryDirectory() as dirname:
-            X = np.memmap(os.path.join(dirname, "X"), "float64", mode="w+", shape=size)
-            X[:] = 1
-            out = np.memmap(os.path.join(dirname, "c"),
-                            "float64", mode="w+", shape=(X.shape[0], X.shape[0]))
+        with tempfile.TemporaryFile() as fX:
+            with tempfile.NamedTemporaryFile() as fout:
+                X = np.memmap(fX, "float64", mode="w+", shape=size)
+                X[:] = 1
+                out = np.memmap(fout, "float64", mode="w+", shape=(X.shape[0], X.shape[0]))
 
-            cov(X, rowvar=True, out=out, copy=False)
+                cov(X, rowvar=True, out=out, copy=False)
 
     # the following tests are adapted from NumPy
 
@@ -171,10 +171,10 @@ class TestDot(unittest.TestCase):
         size = (1_000, 100)
         # size = (25_000, 100_000)  # The max size we want to support
 
-        with tempfile.TemporaryDirectory() as dirname:
-            X = np.memmap(os.path.join(dirname, "X"), "float64", mode="w+", shape=size)
-            X[:] = 1
-            out = np.memmap(os.path.join(dirname, "c"),
-                            "float64", mode="w+", shape=(X.shape[0], X.shape[0]))
+        with tempfile.TemporaryFile() as fX:
+            with tempfile.NamedTemporaryFile() as fout:
+                X = np.memmap(fX, "float64", mode="w+", shape=size)
+                X[:] = 1
+                out = np.memmap(fout, "float64", mode="w+", shape=(X.shape[0], X.shape[0]))
 
-            dot(X, X.T, out=out)
+                dot(X, X.T, out=out)
