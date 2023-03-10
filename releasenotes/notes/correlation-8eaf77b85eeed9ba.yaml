@@ -1,0 +1,14 @@
+---
+features:
+  - |
+    Add ``dwave.plugins.sklearn.utilities.cov`` function. A drop-in replacement
+    for ``numpy.cov`` that is modified to avoid unnecessary memory usage when
+    working with ``numpy.memmap`` arrays.
+  - |
+    Add ``dwave.plugins.sklearn.utilities.corrcoef`` function. A drop-in replacement
+    for ``numpy.corrcoef`` that is modified to avoid unnecessary memory usage when
+    working with ``numpy.memmap`` arrays.
+    - |
+    Add ``dwave.plugins.sklearn.utilities.dot_2d`` function. A drop-in replacement
+    for ``numpy.dot`` for 2d arrays that is modified to avoid unnecessary memory usage when
+    working with ``numpy.memmap`` arrays.
