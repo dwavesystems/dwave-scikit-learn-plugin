@@ -14,6 +14,7 @@
 
 import tempfile
 import logging
+import warnings
 
 import dimod
 import numpy as np
@@ -38,6 +39,7 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         time_limit: int = 10,
         n_default_feature: int = 10,
         method: str = "correlation",
+        chunksize = None
     ) -> None:
         """
         Initialize a hybrid quantum-classical feature selection transformer.
@@ -67,6 +69,8 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
             )
 
         self.method = method
+        
+        self.chunksize = chunksize
 
     def _get_support_mask(self):
         """
@@ -83,7 +87,7 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         return self.mask
 
     def calculate_correlation_matrix(
-        self, X: np.ndarray, y: Union[np.ndarray, None] = None, chunksize: int = 500
+        self, X: np.ndarray, y: Union[np.ndarray, None] = None
     ):
         """_summary_
 
@@ -98,6 +102,11 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         logging.info(
             "Starting correlation calculation"
         )  
+        if self.chunksize is None:
+            chunksize = 500
+        else: 
+            chunksize = self.chunksize
+        
         # heavy logging to diagnose memory performance
         # generate correlation matrix, use tempfile and chunked process if too big
         if X.shape[1] < chunksize:
@@ -171,8 +180,8 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         X: Union[np.ndarray, pd.DataFrame],
         y: Union[np.ndarray, pd.DataFrame, pd.Series, None] = None,
         number_of_features: int = None,
-        strict: bool = True,
-    ):
+        strict: bool = True
+        ):
         """
         Conducts the feature selection proceedure and finds the features to keep.
         Args:
@@ -186,7 +195,7 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         """
         if number_of_features is None:
             number_of_features = self.n_default_feature
-
+        
         if hasattr(X, "toarray") and (not isinstance(X, pd.DataFrame)):
             X = X.toarray()
 
@@ -236,38 +245,42 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         feature_selection_cqm = dimod.CQM()
         feature_selection_cqm.set_objective(feature_selection_bqm)
         logging.info("CQM created (objective only)")
-
+        
         sense = "==" if strict else "<="
-
+        
         feature_selection_cqm.add_constraint_from_iterable(
             [(var, 1) for var in feature_selection_cqm.variables],
             sense,
             number_of_features,
         )
-
-        logging.info("CQM created (full)")
-
+              
         cqm_solver = LeapHybridCQMSampler()
 
         min_time_limit = cqm_solver.min_time_limit(feature_selection_cqm)
-
+        
         if self.time_limit < min_time_limit:
             raise ValueError(
                 f"the time limit must be at least for this problem {min_time_limit}"
             )
-
-        feature_sample = cqm_solver.sample_cqm(feature_selection_cqm, self.time_limit)
+        
+        feature_sample : dimod.SampleSet = cqm_solver.sample_cqm(feature_selection_cqm, time_limit = self.time_limit)
 
         logging.info("CQM sampling done")
 
         # use sample to get selected features
-        feature_sample = feature_sample.filter(lambda d: d.is_feasible)
-        feature_sample_best = feature_sample.first
-
+        
+        feature_sample_feasible = feature_sample.filter(lambda d: d.is_feasible)
+        
+        if len(feature_sample_feasible) != 0: 
+            feature_sample_best = feature_sample_feasible.first
+        else:
+            feature_sample_best = feature_sample.first
+            warnings.warn("No feasible selection found, using lowest energy", RuntimeWarning)
+            raise RuntimeError()
         selected_features = [
             index for index, val in feature_sample_best.sample.items() if val == 1
         ]
-
+        
         if isinstance(X, pd.DataFrame):
             self.selected_columns = X.columns[selected_features]
             self.mask = np.array([(col in self.selected_columns) for col in X.columns])
