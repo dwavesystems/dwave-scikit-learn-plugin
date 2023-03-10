@@ -8,9 +8,9 @@ This package provides a `scikit-learn` transformer for
 
 For an introduction to hybrid methods for feature selection, see the [Feature Selection example](https://github.com/dwave-examples/feature-selection-notebook) Jupyter Notebook.
 
-## Examples
+The package's main class, `sklearn.feature_selection.SelectorMixin`, can be used in any existing `sklearn` pipeline.
 
-The main class is a `sklearn.feature_selection.SelectorMixin` and so can be used in any existing sklearn pipeline.
+## Examples
 
 A minimal example of using the hybrid feature selection: 
 
