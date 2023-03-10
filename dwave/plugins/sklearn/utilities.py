@@ -52,7 +52,7 @@ import typing
 import numpy as np
 import numpy.typing as npt
 
-__all__ = ["corrcoef", "cov", "dot"]
+__all__ = ["corrcoef", "cov", "dot_2d"]
 
 
 def corrcoef(x: npt.ArrayLike, *,
@@ -165,12 +165,10 @@ def cov(m: npt.ArrayLike, *,
 
     if out is None:
         out = np.empty((X.shape[0], X.shape[0]), dtype=X.dtype)
-    elif out.shape[0] != out.shape[1]:
-        raise ValueError
-    elif out.shape[0] != X.shape[0]:
-        raise ValueError
+    elif out.shape[0] != X.shape[0] or out.shape[0] != out.shape[1]:
+        raise ValueError(f"out must be a ({X.shape[0]}, {X.shape[0]}) array")
 
-    dot(X, X_T.conj(), out=out)
+    dot_2d(X, X_T.conj(), out=out)
     out *= np.true_divide(1, fact)
 
     if hasattr(out, "flush"):
@@ -179,18 +177,18 @@ def cov(m: npt.ArrayLike, *,
     return out
 
 
-def dot(a: npt.ArrayLike, b: npt.ArrayLike, *,
-        out: typing.Optional[np.ndarray] = None,
-        chunksize: int = int(1e+9),
-        ) -> np.ndarray:
-    """A drop-in replacment for :func:`numpy.dot`.
+def dot_2d(a: npt.ArrayLike, b: npt.ArrayLike, *,
+           out: typing.Optional[np.ndarray] = None,
+           chunksize: int = int(1e+9),
+           ) -> np.ndarray:
+    """A drop-in replacment for :func:`numpy.dot` for 2d arrays.
 
     This method is modified to avoid unnecessary memory usage when working with
     :class:`numpy.memmap` arrays.
 
     Args:
-        a: See :func:`numpy.dot`.
-        b: See :func:`numpy.dot`.
+        a: See :func:`numpy.dot`. ``a.ndim`` must be 2.
+        b: See :func:`numpy.dot`. ``b.ndim`` must be 2.
         out: See :func:`numpy.dot`.
         chunksize: The number of bytes that should be created by each step
             of the multiplication. This is used to keep the total memory
@@ -204,6 +202,11 @@ def dot(a: npt.ArrayLike, b: npt.ArrayLike, *,
         a = np.asarray(a)
     if not isinstance(b, np.memmap):
         b = np.asarray(b)
+
+    if a.ndim != 2:
+        raise ValueError("a must be a 2d array")
+    if b.ndim != 2:
+        raise ValueError("b must be a 2d array")
 
     if out is None:
         out = np.empty((a.shape[0], b.shape[1]), dtype=np.result_type(a, b))

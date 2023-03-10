@@ -51,7 +51,7 @@ import unittest
 
 import numpy as np
 
-from dwave.plugins.sklearn.utilities import corrcoef, cov, dot
+from dwave.plugins.sklearn.utilities import corrcoef, cov, dot_2d
 
 
 class TestCorrCoef(unittest.TestCase):
@@ -148,12 +148,12 @@ class TestCov(unittest.TestCase):
         np.testing.assert_allclose(cov(x3), cov(x3, rowvar=False))
 
 
-class TestDot(unittest.TestCase):
+class TestDot2D(unittest.TestCase):
     def test_agreement(self):
         rng = np.random.default_rng(42)
         X = rng.uniform(size=(10, 20))
         Y = rng.uniform(size=(20, 100))
-        np.testing.assert_array_equal(dot(X, Y), np.dot(X, Y))
+        np.testing.assert_array_equal(dot_2d(X, Y), np.dot(X, Y))
 
     def test_chunksize(self):
         # make sure that chunk sizes that don't align with the total number
@@ -161,8 +161,8 @@ class TestDot(unittest.TestCase):
         rng = np.random.default_rng(42)
         X = rng.uniform(size=(10, 20))
         Y = rng.uniform(size=(20, 15))
-        np.testing.assert_array_almost_equal(dot(X, Y, chunksize=86), np.dot(X, Y))
-        np.testing.assert_array_almost_equal(dot(X, Y, chunksize=365), np.dot(X, Y))
+        np.testing.assert_array_almost_equal(dot_2d(X, Y, chunksize=86), np.dot(X, Y))
+        np.testing.assert_array_almost_equal(dot_2d(X, Y, chunksize=365), np.dot(X, Y))
 
     def test_memmap(self):
         # Smoketest for memmap.
@@ -177,4 +177,4 @@ class TestDot(unittest.TestCase):
                 X[:] = 1
                 out = np.memmap(fout, "float64", mode="w+", shape=(X.shape[0], X.shape[0]))
 
-                dot(X, X.T, out=out)
+                dot_2d(X, X.T, out=out)

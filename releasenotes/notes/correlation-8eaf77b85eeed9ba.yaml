@@ -9,6 +9,6 @@ features:
     for ``numpy.corrcoef`` that is modified to avoid unnecessary memory usage when
     working with ``numpy.memmap`` arrays.
     - |
-    Add ``dwave.plugins.sklearn.utilities.dot`` function. A drop-in replacement
-    for ``numpy.dot`` that is modified to avoid unnecessary memory usage when
+    Add ``dwave.plugins.sklearn.utilities.dot_2d`` function. A drop-in replacement
+    for ``numpy.dot`` for 2d arrays that is modified to avoid unnecessary memory usage when
     working with ``numpy.memmap`` arrays.
