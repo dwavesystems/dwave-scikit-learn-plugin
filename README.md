@@ -27,7 +27,12 @@ selector = SelectFromQuadraticModel()
 data_transformed = selector.fit_transform(data, outcome)
 ```
 
-Sometimes the resulting [constrained quadratic model](https://docs.ocean.dwavesys.com/en/stable/docs_dimod/reference/models.html#module-dimod.constrained.constrained) is too large to be solved in the default time limit, in which case the resutling error will tell you of the minimum appropriate time limit. The feature selector can be re-instantiated with a longer time limit 
+For large problems, the default runtime may be insufficient. You can use the CQM solvers's 
+[`min_time_limit`](https://docs.ocean.dwavesys.com/en/stable/docs_system/reference/generated/dwave.system.samplers.LeapHybridCQMSampler.min_time_limit.html)
+method to find the minimum accepted runtime for your problem; alternatively, simply submit as above 
+and check the returned error message for the required runtime. 
+
+The feature selector can be re-instantiated with a longer time limit.
 
 ```python
 # instantiate the feature selection class with a longer time limit 
