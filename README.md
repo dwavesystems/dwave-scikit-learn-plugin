@@ -3,7 +3,10 @@
 
 # dwave-scikit-learn-plugin
 
-This package contains a `sci-kit learn` transformer which does hybrid feature selection. For more information about the hybrid feature selection method, see the [example notebook](https://github.com/dwave-examples/feature-selection-notebook).
+This package provides a `scikit-learn` transformer for 
+[feature selection](https://en.wikipedia.org/wiki/Feature_selection) using a quantum-classical hybrid solver. 
+
+For an introduction to hybrid methods for feature selection, see the [Feature Selection example](https://github.com/dwave-examples/feature-selection-notebook) Jupyter Notebook.
 
 ## Examples
 
