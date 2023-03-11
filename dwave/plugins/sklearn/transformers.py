@@ -188,7 +188,10 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
 
         logging.info(f"constructing feature selection model")
 
-        chunksize = 100
+        if self.chunksize is not None:
+            chunksize = self.chunksize
+        else: 
+            chunksize = 100 
 
         if X.shape[1] < chunksize:
             logging.info("constructing BQM using dimod constructor from matrix")
@@ -222,6 +225,7 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
 
         feature_selection_cqm = dimod.CQM()
         feature_selection_cqm.set_objective(feature_selection_bqm)
+        
         logging.info("CQM created (objective only)")
 
         sense = "==" if strict else "<="
