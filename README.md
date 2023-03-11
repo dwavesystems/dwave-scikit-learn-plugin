@@ -12,7 +12,7 @@ The package's main class, `sklearn.feature_selection.SelectorMixin`, can be used
 
 ## Examples
 
-A minimal example of using the hybrid feature selection: 
+A minimal example of using the plugin: 
 
 ```python
 from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
@@ -58,6 +58,14 @@ Released under the Apache License 2.0
 
 Ocean's [contributing guide](https://docs.ocean.dwavesys.com/en/stable/contributing.html)
 has guidelines for contributing to Ocean packages.
+
+This package uses `black` for python formatting. Before commiting changes run 
+
+```bash
+black file-changed.py
+```
+
+T
 
 ### Release Notes
 

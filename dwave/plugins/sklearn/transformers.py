@@ -23,13 +23,14 @@ import pandas as pd
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectorMixin
 from dwave.system import LeapHybridCQMSampler
+from dwave.cloud.exceptions import ConfigFileError, SAPIError, SolverAuthenticationError
 from typing import Union
 
 __all__ = ["SelectFromQuadraticModel"]
 
 
 class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
-    """_summary_"""
+    """scikit-learn `SelectorMizin` which uses the `LeapHybridCQMSampler` solver."""
 
     acceptable_methods = ["correlation", "mutual information"]
 
@@ -39,19 +40,19 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         time_limit: int = 10,
         n_default_feature: int = 10,
         method: str = "correlation",
-        chunksize = None
+        chunksize=None,
     ) -> None:
-        """
-        Initialize a hybrid quantum-classical feature selection transformer.
+        """Instantiate `SelectFromQuadraticModel`
 
         Args:
-            alpha (float, optional): hyper-parameter which weights correlation to outcome vs covariance. Must be between 0 and 1. Defaults to .5.
-            time_limit (int, optional): a time limit for the Leap Constrained Quadratic Model Solver to solve the feature selection problem.
-            Must be at least the minimum time limit of the solver. Defaults to 10.
-            n_default_features (int, optional)
-            method (string, optional): The method used to calculate the model matrix. One of "correlation" or "mutual information". Defaults to correlation.
+            alpha (float, optional): hyperparameter between 0 and 1, determines how heavily the objective is weighted. Defaults to 0.5.
+            time_limit (int, optional): time limit for the Leap `LeapHybridCQMSampler` solver. Defaults to 10.
+            n_default_feature (int, optional): the number of features to select. This is used if `fit` or `fit_transform` aren't passed `number_of_features`. Defaults to 10.
+            method (str, optional): The method of formulating the feature selection problem, only "correlation" is supported. Defaults to "correlation".
+            chunksize (_type_, optional): Used for testing internal memory usage. Defaults to None.
         """
         super().__init__()
+
         self.alpha = alpha
         self.time_limit = time_limit
         self.n_default_feature = n_default_feature
@@ -69,18 +70,22 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
             )
 
         self.method = method
-        
+
         self.chunksize = chunksize
 
-    def _get_support_mask(self):
+    def _get_support_mask(self) -> list:
+        """Get the boolean mask indicating which features are selected
+
+        Args:
+
+        Returns:
+          boolean array of shape [# input features]: An element is True iff its corresponding feature is selected for
+          retention.Returns
+
+        Raises:
+            RuntimeError: This method will raise an error if it is run before `fit`
         """
-        Get the boolean mask indicating which features are selected
-        Returns
-        -------
-        support : boolean array of shape [# input features]
-            An element is True iff its corresponding feature is selected for
-            retention.
-        """
+
         if self.mask is None:
             raise RuntimeError("fit hasn't been run yet")
 
@@ -88,25 +93,23 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
 
     def calculate_correlation_matrix(
         self, X: np.ndarray, y: Union[np.ndarray, None] = None
-    ):
-        """_summary_
+    ) -> np.ndarray:
+        """Calculate the correlation matrix between the columns of X, optionally with the diagonals corresponding to correlation with outcome.
 
         Args:
-            X (_type_): _description_
-            y (_type_, optional): _description_. Defaults to None.
-            chunksize (int, optional): _description_. Defaults to 500.
+            X (np.ndarray):  An array of shape (n_obserations, n_features)
+            y (Union[np.ndarray, None], optional): An array of shape (n_observations, 1) with the outcome variable. Defaults to None.
 
         Returns:
-            _type_: _description_
+            np.ndarray:  a correlation matrix of shape (n_features, n_features). The diagonal is 1 if `y` is not passed, otherwise it is `corr(x_i, y)`.
         """
-        logging.info(
-            "Starting correlation calculation"
-        )  
+
+        logging.info("Starting correlation calculation")
         if self.chunksize is None:
             chunksize = 500
-        else: 
+        else:
             chunksize = self.chunksize
-        
+
         # heavy logging to diagnose memory performance
         # generate correlation matrix, use tempfile and chunked process if too big
         if X.shape[1] < chunksize:
@@ -170,9 +173,16 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
 
         return correlation_matrix
 
-    def calculate_mutual_information(
-        self, X: np.ndarray, y: Union[np.ndarray, None] = None
-    ):
+    def calculate_mutual_information(self, X: np.ndarray, y: np.ndarray):
+        """Mutual information matrix with the outcome
+
+        Args:
+            X (np.ndarray): An array of shape (n_obserations, n_features)
+            y (np.ndarray): An array of shape (n_observations, 1) with the outcome variable
+
+        Raises:
+            NotImplementedError: This function is not yet implemented, so it will always raise an error
+        """
         raise NotImplementedError("Mutual information is not yet implemented")
 
     def fit(
@@ -180,27 +190,30 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         X: Union[np.ndarray, pd.DataFrame],
         y: Union[np.ndarray, pd.DataFrame, pd.Series, None] = None,
         number_of_features: int = None,
-        strict: bool = True
-        ):
-        """
-        Conducts the feature selection proceedure and finds the features to keep.
+        strict: bool = True,
+    ):
+        """Conducts the feature selection proceedure and finds the features to keep.
+
         Args:
-            X (_type_): a matrix-like object where each row is an observation, and each column is a feature to be selected. If mutual information is selected
-                        every non-binary row will be assumed to be continuous.
-            y (_type_, optional): optional outcome to be considered in feature selection. If provided, the correlation with the outcome will be considered,
-                                  if not then only the covariances among the features will be considered. Required for mutual information. Defaults to None.
+            X (Union[np.ndarray, pd.DataFrame]): a matrix-like object where each row is an observation, and each column is a feature to be selected. If mutual information is selected
+            every non-binary row will be assumed to be continuous.
+            y (Union[np.ndarray, pd.DataFrame, pd.Series, None], optional): outcome to be considered in feature selection. If provided, the correlation with the outcome will be considered,
+            if not then only the covariances among the features will be considered. Required for mutual information. Defaults to None.
             number_of_features (int, optional): The number of features to be selected. If `strict` is `True` exactly this number of features,
-                                                otherwise at most this number of features is selected. Defaults to number given at construction.
+            otherwise at most this number of features is selected. If `None` then `n_default_feature` is used. Defaults to None.
             strict (bool, optional): If `True` exactly `number_of_features` is selected, otherwise at most `number_of_features` is selected. Defaults to True.
+
+        Returns:
+            SelectFromQuadraticModel: This instance of `SelectFromQuadraticModel`
         """
         if number_of_features is None:
             number_of_features = self.n_default_feature
-        
+
         if hasattr(X, "toarray") and (not isinstance(X, pd.DataFrame)):
             X = X.toarray()
 
         if self.method == "correlation":
-                model_matrix = self.calculate_correlation_matrix(X, y)
+            model_matrix = self.calculate_correlation_matrix(X, y)
         elif self.method == "mutual information":
             if y is None:
                 raise ValueError("mutual infromation requires outcome")
@@ -245,42 +258,61 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         feature_selection_cqm = dimod.CQM()
         feature_selection_cqm.set_objective(feature_selection_bqm)
         logging.info("CQM created (objective only)")
-        
+
         sense = "==" if strict else "<="
-        
+
         feature_selection_cqm.add_constraint_from_iterable(
             [(var, 1) for var in feature_selection_cqm.variables],
             sense,
             number_of_features,
         )
-              
-        cqm_solver = LeapHybridCQMSampler()
+
+        try:
+            cqm_solver = LeapHybridCQMSampler()
+        except (ConfigFileError, SAPIError, SolverAuthenticationError) as e:
+            raise RuntimeError(
+                f"""The Leap hybrid solver raised the following error: {e}. 
+                               
+                               There is a high likelihood that dwave.system is not set up properly or you are missing a Leap token. 
+                               If you did not configure dwave.system please see the installation guide
+                                    
+                                    https://docs.ocean.dwavesys.com/en/stable/overview/install.html
+                               
+                               If you have installed dwave.system but need more details on configuration see 
+        
+                                    https://docs.ocean.dwavesys.com/en/stable/overview/sapi.html
+                               """
+            )
 
         min_time_limit = cqm_solver.min_time_limit(feature_selection_cqm)
-        
+
         if self.time_limit < min_time_limit:
             raise ValueError(
                 f"the time limit must be at least for this problem {min_time_limit}"
             )
-        
-        feature_sample : dimod.SampleSet = cqm_solver.sample_cqm(feature_selection_cqm, time_limit = self.time_limit)
+
+        feature_sample: dimod.SampleSet = cqm_solver.sample_cqm(
+            feature_selection_cqm, time_limit=self.time_limit
+        )
 
         logging.info("CQM sampling done")
 
         # use sample to get selected features
-        
+
         feature_sample_feasible = feature_sample.filter(lambda d: d.is_feasible)
-        
-        if len(feature_sample_feasible) != 0: 
+
+        if len(feature_sample_feasible) != 0:
             feature_sample_best = feature_sample_feasible.first
         else:
             feature_sample_best = feature_sample.first
-            warnings.warn("No feasible selection found, using lowest energy", RuntimeWarning)
+            warnings.warn(
+                "No feasible selection found, using lowest energy", RuntimeWarning
+            )
             raise RuntimeError()
         selected_features = [
             index for index, val in feature_sample_best.sample.items() if val == 1
         ]
-        
+
         if isinstance(X, pd.DataFrame):
             self.selected_columns = X.columns[selected_features]
             self.mask = np.array([(col in self.selected_columns) for col in X.columns])
@@ -298,18 +330,17 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         y: Union[np.ndarray, pd.DataFrame, pd.Series, None] = None,
         **kwargs,
     ):
-        """
-        Returns X selected for the features decided in `self.fit()`. If `self.fit()` has not been called yet then transform will first call it.
+        """Returns X selected for the features decided in `self.fit()`. If `self.fit()` has not been called yet then transform will first call it.
 
         Args:
-            X (_type_): a matrix-like object where each row is an observation, and each column is a feature to be selected.
-            y (_type_, optional): optional outcome to be considered in feature selection. If provided, the correlation with the outcome will be considered,
-                                  if not then only the covariances among the features will be considered. Only used if `fit()` has not been called already. Defaults to None..
-            kwargs (_type_, optional): optionally passed to the fit method if not yet called.
+            X (Union[np.ndarray, pd.DataFrame]): a matrix-like object where each row is an observation, and each column is a feature to be selected.
+            y (Union[np.ndarray, pd.DataFrame, pd.Series, None], optional): Outcome to be considered in feature selection. If provided, the correlation with the outcome will be considered,
+            if not then only the covariances among the features will be considered. Only used if `fit()` has not been called already. Defaults to None.
 
         Returns:
-            X (_type_): X with the selected subset of features
+            (Union[np.ndarray, pd.DataFrame]): Same type as X, with the selected subset of features
         """
+
         if self.mask is None:
             self.fit(X, y, **kwargs)
 
@@ -323,16 +354,12 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         return X
 
     def unfit(self) -> None:
-        """
-        undoes the `fit()` method
-        """
+        """undoes the `fit()` method"""
         self.selected_columns = None
         self.mask = None
         return None
 
     def update_time_limit(self, time_limit: int) -> None:
-        """
-        update the time limit
-        """
+        """update the time limit"""
         self.time_limit = time_limit
         return None

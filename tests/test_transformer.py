@@ -22,13 +22,12 @@ import dimod
 
 
 class MockCQM(dimod.ExactCQMSolver):
-
     def __init__(self):
         super().__init__()
-    
+
     def min_time_limit(self, cqm):
         return 1
-    
+
 
 @unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridCQMSampler", MockCQM)
 class TestTransformer(unittest.TestCase):
@@ -41,9 +40,7 @@ class TestTransformer(unittest.TestCase):
         self.y_pd = None
 
     def create_data_numpy(self) -> None:
-        """
-        Idempotent function that instantiates a class variable containing test numpy data
-        """
+        """Idempotent function that instantiates a class variable containing test numpy data"""
 
         if self.X_np is None:
             self.X_np = self.rng.uniform(-10, 10, size=(100, 9))
@@ -54,8 +51,7 @@ class TestTransformer(unittest.TestCase):
             )
 
     def create_data_pd(self) -> None:
-        """
-        Idempotent function that instantiates a class variable containing test pandas data
+        """Idempotent function that instantiates a class variable containing test pandas data
         derived from the numpy data. If `create_data_numpy` has not been called, this function
         will call it.
         """
@@ -72,9 +68,7 @@ class TestTransformer(unittest.TestCase):
         self.create_data_pd()
 
     def test_init_good(self):
-        """
-        Enforcing defaults and making sure variables are set
-        """
+        """Enforcing defaults and making sure variables are set"""
         a = SelectFromQuadraticModel()
 
         b = SelectFromQuadraticModel(alpha=0.1)
@@ -103,9 +97,7 @@ class TestTransformer(unittest.TestCase):
         )
 
     def test_init_bad(self):
-        """
-        Testing edges of initialization parameters
-        """
+        """Testing edges of initialization parameters"""
 
         self.assertRaises(ValueError, SelectFromQuadraticModel, alpha=-10)
         self.assertRaises(ValueError, SelectFromQuadraticModel, alpha=10)
@@ -114,9 +106,7 @@ class TestTransformer(unittest.TestCase):
         self.assertRaises(ValueError, SelectFromQuadraticModel, time_limit=1)
 
     def test_fit_no_y(self):
-        """
-        Test the fit method without an outcome variable specified
-        """
+        """Test the fit method without an outcome variable specified"""
 
         selector = SelectFromQuadraticModel(n_default_feature=7)
 
@@ -177,9 +167,7 @@ class TestTransformer(unittest.TestCase):
             self.fail(e)
 
     def test_fit_y(self):
-        """
-        Test the fit method with an outcome variable specified.
-        """
+        """Test the fit method with an outcome variable specified."""
         selector = SelectFromQuadraticModel(n_default_feature=7)
 
         # test default numpy
@@ -239,9 +227,7 @@ class TestTransformer(unittest.TestCase):
             self.fail(e)
 
     def test_transform_no_y(self):
-        """
-        Test the transform method without the outcome variable specified
-        """
+        """Test the transform method without the outcome variable specified"""
         selector = SelectFromQuadraticModel(n_default_feature=7)
 
         # test numpy
@@ -265,9 +251,7 @@ class TestTransformer(unittest.TestCase):
         self.assertTrue(x.equals(x_from_fit))
 
     def test_transform_y(self):
-        """
-        Test the transform method with the outcome variable specified
-        """
+        """Test the transform method with the outcome variable specified"""
         selector = SelectFromQuadraticModel(n_default_feature=7)
 
         # test numpy
@@ -311,9 +295,7 @@ class TestTransformer(unittest.TestCase):
         self.assertTrue(x.equals(x_from_fit))
 
     def test_fit_transform_no_y(self):
-        """
-        Test the transform method without the outcome variable specified
-        """
+        """Test the transform method without the outcome variable specified"""
         selector = SelectFromQuadraticModel(n_default_feature=7)
 
         # test numpy without fit
@@ -334,10 +316,8 @@ class TestTransformer(unittest.TestCase):
         self.assertTrue(x.equals(x_from_fit))
 
     def test_fit_transform_y(self):
-        """
-        Test the transform method with the outcome variable specified
-        """
-        selector =SelectFromQuadraticModel(n_default_feature=7)
+        """Test the transform method with the outcome variable specified"""
+        selector = SelectFromQuadraticModel(n_default_feature=7)
 
         # test numpy without fit
         x = selector.fit_transform(self.X_np, self.y_np, number_of_features=5)
@@ -356,9 +336,7 @@ class TestTransformer(unittest.TestCase):
         self.assertTrue(x.equals(x_from_fit))
 
     def test_unfit(self):
-        """
-        Test `unfit` function
-        """
+        """Test `unfit` function"""
         selector = SelectFromQuadraticModel(n_default_feature=7)
 
         selector.fit(self.X_np, self.y_np)
@@ -368,12 +346,11 @@ class TestTransformer(unittest.TestCase):
         self.assertIsNone(selector.selected_columns)
 
     def test_update_time_limit(self):
-        """
-        Test the `update_time_limit` function.
-        """
+        """Test the `update_time_limit` function."""
         selector = SelectFromQuadraticModel(n_default_feature=7)
         selector.update_time_limit(100)
         self.assertEqual(selector.time_limit, 100)
+
 
 @unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridCQMSampler", MockCQM)
 class TestManyFeatures(unittest.TestCase):
@@ -386,9 +363,7 @@ class TestManyFeatures(unittest.TestCase):
         self.y_pd = None
 
     def create_data_numpy(self) -> None:
-        """
-        Idempotent function that instantiates a class variable containing test numpy data
-        """
+        """Idempotent function that instantiates a class variable containing test numpy data"""
 
         if self.X_np is None:
             self.X_np = self.rng.uniform(-10, 10, size=(100, 9))
@@ -401,8 +376,7 @@ class TestManyFeatures(unittest.TestCase):
         return None
 
     def create_data_pd(self) -> None:
-        """
-        Idempotent function that instantiates a class variable containing test pandas data
+        """Idempotent function that instantiates a class variable containing test pandas data
         derived from the numpy data. If `create_data_numpy` has not been called, this function
         will call it.
         """
@@ -413,15 +387,13 @@ class TestManyFeatures(unittest.TestCase):
 
         if self.y_pd is None:
             self.y_pd = pd.DataFrame(self.y_np)
-    
+
     def setUp(self) -> None:
         super().setUp()
         self.create_data_pd()
 
     def test_fit_transform_no_y(self):
-        """
-        Test the transform method without the outcome variable specified
-        """
+        """Test the transform method without the outcome variable specified"""
         selector = SelectFromQuadraticModel(chunksize=2, n_default_feature=7)
 
         # test numpy without fit
@@ -442,9 +414,7 @@ class TestManyFeatures(unittest.TestCase):
         self.assertTrue(x.equals(x_from_fit))
 
     def test_fit_transform_y(self):
-        """
-        Test the transform method with the outcome variable specified
-        """
+        """Test the transform method with the outcome variable specified"""
         selector = SelectFromQuadraticModel(chunksize=2, n_default_feature=7)
 
         # test numpy without fit
