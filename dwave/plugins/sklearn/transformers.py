@@ -23,8 +23,9 @@ import pandas as pd
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectorMixin
 from dwave.system import LeapHybridCQMSampler
-from dwave.cloud.exceptions import ConfigFileError, SAPIError, SolverAuthenticationError
+from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
 from typing import Union
+from .utilities import corrcoef
 
 __all__ = ["SelectFromQuadraticModel"]
 
@@ -103,75 +104,37 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         Returns:
             np.ndarray:  a correlation matrix of shape (n_features, n_features). The diagonal is 1 if `y` is not passed, otherwise it is `corr(x_i, y)`.
         """
+        # generate correlation matrix, use tempfile and chunked process
 
-        logging.info("Starting correlation calculation")
-        if self.chunksize is None:
-            chunksize = 500
-        else:
-            chunksize = self.chunksize
+        f_x = tempfile.NamedTemporaryFile()
+        f_corr = tempfile.NamedTemporaryFile()
 
-        # heavy logging to diagnose memory performance
-        # generate correlation matrix, use tempfile and chunked process if too big
-        if X.shape[1] < chunksize:
-            logging.info("Using numpy corrcoef")
-            correlation_matrix = np.corrcoef(X, rowvar=False)
-            X_standardized = None
-        else:
-            logging.info("data is too large, will be chunked")
+        X_memmapped = np.memmap(f_x, "float64", mode="w+", shape=X.shape)
+        X_memmapped[:] = X[:]
+        X_memmapped.flush()
 
-            with tempfile.NamedTemporaryFile() as f:
-                X_base = np.memmap(f, "float64", mode="w+", shape=X.shape)
+        correlation_matrix = np.memmap(
+            f_corr, "float64", mode="w+", shape=(X.shape[1], X.shape[1])
+        )
+        corrcoef(X_memmapped, out=correlation_matrix, copy=False, rowvar=False)
 
-            if isinstance(X, pd.DataFrame):
-                X_base[:] = X.to_numpy()
-            else:
-                X_base[:] = X[:]
-
-            X_base.flush()
-
-            logging.info("standardizing features")
-            with tempfile.NamedTemporaryFile() as f:
-                X_standardized = np.memmap(f, "float64", mode="w+", shape=X.shape)
-
-            X_standardized = (X_base - X_base.mean(axis=0)) / X_base.std(axis=0)
-
-            n_features = X_standardized.shape[1]
-
-            with tempfile.NamedTemporaryFile() as temp:
-                correlation_matrix = np.memmap(
-                    temp, "float64", mode="w+", shape=(n_features, n_features)
-                )
-
-            logging.info("calculating chunked correlations")
-            for row_index in range(0, n_features, chunksize):
-                for col_index in range(0, n_features, chunksize):
-                    row_index_max = min(row_index + chunksize, n_features)
-                    col_index_max = min(col_index + chunksize, n_features)
-                    chunk1 = X_standardized[:, row_index:row_index_max]
-                    chunk2 = X_standardized[:, col_index:col_index_max]
-                    correlation_matrix[
-                        row_index:row_index_max, col_index:col_index_max
-                    ] = (chunk1.T @ chunk2)
-                    correlation_matrix.flush()
-            correlation_matrix = 1 / X_standardized.shape[0] * correlation_matrix
-
-        logging.info("correlation matrix calculated")
-        # sub in diagonal for correlation with outcome (if there is an outcome)
-        if y is not None:
-            logging.info("calculating outcome correlation")
-            if X_standardized is None:
-                X_standardized = (X - X.mean(axis=0)) / X.std(axis=0)
-
-            y_standardized = (y - y.mean()) / y.std()
-
+        if y is None:
             np.fill_diagonal(
-                correlation_matrix,
-                self.alpha * (1 / y.shape[0]) * (X_standardized.T @ y_standardized),
+                correlation_matrix, [0 for _ in range(correlation_matrix.shape[1])]
             )
         else:
-            np.fill_diagonal(correlation_matrix, [0 for _ in range(X.shape[1])])
+            X_memmapped = (X_memmapped - X_memmapped.mean(axis=0)) / (
+                X_memmapped.std(axis=0)
+            )
+            y_standardized = (y - y.mean()) / y.std()
+            np.fill_diagonal(
+                correlation_matrix,
+                self.alpha * (1 / y.shape[0]) * (X_memmapped.T @ y_standardized),
+            )
 
-        return correlation_matrix
+        f_x.close()
+
+        return correlation_matrix, f_corr
 
     def calculate_mutual_information(self, X: np.ndarray, y: np.ndarray):
         """Mutual information matrix with the outcome
@@ -213,11 +176,11 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
             X = X.toarray()
 
         if self.method == "correlation":
-            model_matrix = self.calculate_correlation_matrix(X, y)
+            model_matrix, f_model = self.calculate_correlation_matrix(X, y)
         elif self.method == "mutual information":
             if y is None:
                 raise ValueError("mutual infromation requires outcome")
-            model_matrix = self.calculate_mutual_information(X, y)
+            model_matrix, f_model = self.calculate_mutual_information(X, y)
         else:
             raise ValueError(f"Only methods {self.acceptable_methods} are implimented")
 
@@ -253,6 +216,8 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
                     ]
                     feature_selection_bqm.add_interactions_from(quad_biases)
 
+        f_model.close()
+
         logging.info("BQM created")
 
         feature_selection_cqm = dimod.CQM()
@@ -269,19 +234,19 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
 
         try:
             cqm_solver = LeapHybridCQMSampler()
-        except (ConfigFileError, SAPIError, SolverAuthenticationError) as e:
+        except (ConfigFileError, SolverAuthenticationError) as e:
             raise RuntimeError(
                 f"""The Leap hybrid solver raised the following error: {e}. 
-                               
-                               There is a high likelihood that dwave.system is not set up properly or you are missing a Leap token. 
-                               If you did not configure dwave.system please see the installation guide
-                                    
-                                    https://docs.ocean.dwavesys.com/en/stable/overview/install.html
-                               
-                               If you have installed dwave.system but need more details on configuration see 
-        
-                                    https://docs.ocean.dwavesys.com/en/stable/overview/sapi.html
-                               """
+                
+                There is a high likelihood that dwave.system is not set up properly or you are missing a Leap token. 
+                If you did not configure dwave.system please see the installation guide
+                    
+                    https://docs.ocean.dwavesys.com/en/stable/overview/install.html
+                
+                If you have installed dwave.system but need more details on configuration see 
+
+                    https://docs.ocean.dwavesys.com/en/stable/overview/sapi.html
+                """
             )
 
         min_time_limit = cqm_solver.min_time_limit(feature_selection_cqm)
