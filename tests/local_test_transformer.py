@@ -403,7 +403,7 @@ class TestManyFeatures(unittest.TestCase):
 
         if self.y_pd is None:
             self.y_pd = pd.DataFrame(self.y_np)
-    
+
     def setUp(self) -> None:
         super().setUp()
         self.create_data_pd()
@@ -462,7 +462,7 @@ class TestVeryManyFeatures(unittest.TestCase):
         self.y_np = None
         self.X_pd = None
         self.y_pd = None
-    
+
     def create_data_numpy(self) -> None:
         """
         Idempotent function that instantiates a class variable containing test numpy data
@@ -491,11 +491,11 @@ class TestVeryManyFeatures(unittest.TestCase):
 
         if self.y_pd is None:
             self.y_pd = pd.DataFrame(self.y_np)
-    
+
     def setUp(self) -> None:
         super().setUp()
         self.create_data_pd()
-    
+
     def test_fit_transform_no_y(self):
         """
         Test the transform method without the outcome variable specified
