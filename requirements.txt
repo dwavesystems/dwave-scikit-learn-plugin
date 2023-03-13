@@ -8,3 +8,4 @@ scikit-learn==1.2.0; python_version >= '3.8'
 scikit-learn==1.0.2; python_version < '3.8'
 
 reno==3.5.0
+black==23.1.0

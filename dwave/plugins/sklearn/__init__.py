@@ -13,3 +13,8 @@
 # limitations under the License.
 
 __version__ = '0.0.1'
+
+try:
+    from dwave.plugins.sklearn.feature_selection import *
+except:
+    pass
