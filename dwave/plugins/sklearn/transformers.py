@@ -46,11 +46,12 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         """Instantiate `SelectFromQuadraticModel`
 
         Args:
-            alpha (float, optional): hyperparameter between 0 and 1, determines how heavily the objective is weighted. Defaults to 0.5.
-            time_limit (int, optional): time limit for the Leap `LeapHybridCQMSampler` solver. Defaults to 10.
-            n_default_feature (int, optional): the number of features to select. This is used if `fit` or `fit_transform` aren't passed `number_of_features`. Defaults to 10.
-            method (str, optional): The method of formulating the feature selection problem, only "correlation" is supported. Defaults to "correlation".
-            chunksize (_type_, optional): Used for testing internal memory usage. Defaults to None.
+            alpha: Weighting hyperparameter for the objective . Must be between 0 and 1.
+            time_limit: Runtime limit for the Leap hybrid CQM solver.
+            n_default_feature: Number of features to select. Ignored if ``number_of_features`` 
+                is configured in the ``fit`` or ``fit_transform`` methods. 
+            method: Method of formulating the feature selection problem. Only "correlation" is supported. 
+            chunksize: Used for testing internal memory usage. 
         """
         super().__init__()
 
@@ -95,14 +96,18 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
     def calculate_correlation_matrix(
         self, X: np.ndarray, y: Union[np.ndarray, None] = None
     ) -> np.ndarray:
-        """Calculate the correlation matrix between the columns of X, optionally with the diagonals corresponding to correlation with outcome.
+        """Calculate the correlation matrix. 
+        
+            Calculates correlations between the feature columns. Optionally calculates correlations with 
+            outcome for the matrix diagonals.
 
         Args:
-            X (np.ndarray):  An array of shape (n_obserations, n_features)
-            y (Union[np.ndarray, None], optional): An array of shape (n_observations, 1) with the outcome variable. Defaults to None.
+            X:  Features as an array of shape ``(n_observations, n_features)``.
+            y: Outcome variables as an array of shape ``(n_observations, 1)``.
 
         Returns:
-            np.ndarray:  a correlation matrix of shape (n_features, n_features). The diagonal is 1 if `y` is not passed, otherwise it is `corr(x_i, y)`.
+            np.ndarray:  Correlation matrix of shape ``(n_features, n_features)``. The diagonal is 1 
+            if no ``y`` is given; otherwise it is ``corr(x_i, y)``.
         """
         # generate correlation matrix, use tempfile and chunked process
 
@@ -137,14 +142,14 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         return correlation_matrix, f_corr
 
     def calculate_mutual_information(self, X: np.ndarray, y: np.ndarray):
-        """Mutual information matrix with the outcome
+        """Calculate mutual information matrix.
 
         Args:
-            X (np.ndarray): An array of shape (n_obserations, n_features)
-            y (np.ndarray): An array of shape (n_observations, 1) with the outcome variable
+            X: Features as an array of shape ``(n_observations, n_features)``.
+            y: Outcome variables as an array of shape ``(n_observations, 1)``.
 
         Raises:
-            NotImplementedError: This function is not yet implemented, so it will always raise an error
+            NotImplementedError: Always raised (this function is not currently implemented).
         """
         raise NotImplementedError("Mutual information is not yet implemented")
 
@@ -155,15 +160,17 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         number_of_features: int = None,
         strict: bool = True,
     ):
-        """Conducts the feature selection proceedure and finds the features to keep.
+        """Select the features to keep.
 
         Args:
-            X (Union[np.ndarray, pd.DataFrame]): a matrix-like object where each row is an observation, and each column is a feature to be selected. If mutual information is selected
-            every non-binary row will be assumed to be continuous.
-            y (Union[np.ndarray, pd.DataFrame, pd.Series, None], optional): outcome to be considered in feature selection. If provided, the correlation with the outcome will be considered,
-            if not then only the covariances among the features will be considered. Required for mutual information. Defaults to None.
-            number_of_features (int, optional): The number of features to be selected. If `strict` is `True` exactly this number of features,
-            otherwise at most this number of features is selected. If `None` then `n_default_feature` is used. Defaults to None.
+            X: Features as a matrix-like object where columns are the features to be selected 
+                and rows are observations. If mutual information is selected, non-binary 
+                rows are assumed to be continuous.
+            y: Outcome variables to be incorporated in the correlation matrix along with 
+                the covariances among features. Required for mutual information. 
+            number_of_features: Number of features to be selected. If ``strict`` is ``True``, 
+                exactly this number of features is selected; otherwise this is an upper bound. 
+                If set to ``None``, ``n_default_feature`` features are selected.
             strict (bool, optional): If `True` exactly `number_of_features` is selected, otherwise at most `number_of_features` is selected. Defaults to True.
 
         Returns:
