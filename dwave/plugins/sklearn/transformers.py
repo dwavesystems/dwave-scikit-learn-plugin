@@ -171,7 +171,8 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
             number_of_features: Number of features to be selected. If ``strict`` is ``True``, 
                 exactly this number of features is selected; otherwise this is an upper bound. 
                 If set to ``None``, ``n_default_feature`` features are selected.
-            strict (bool, optional): If `True` exactly `number_of_features` is selected, otherwise at most `number_of_features` is selected. Defaults to True.
+            strict: If ``True``, select exactly ``number_of_features`` features; otherwise, ``number_of_features`` 
+                is an upper bound. 
 
         Returns:
             SelectFromQuadraticModel: This instance of `SelectFromQuadraticModel`
@@ -189,7 +190,7 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
                 raise ValueError("mutual infromation requires outcome")
             model_matrix, f_model = self.calculate_mutual_information(X, y)
         else:
-            raise ValueError(f"Only methods {self.acceptable_methods} are implimented")
+            raise ValueError(f"only methods {self.acceptable_methods} are implemented")
 
         # feature selection formulation (same as example)
 
@@ -247,16 +248,10 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
             cqm_solver = LeapHybridCQMSampler()
         except (ConfigFileError, SolverAuthenticationError) as e:
             raise RuntimeError(
-                f"""The Leap hybrid solver raised the following error: {e}. 
-                
-                There is a high likelihood that dwave.system is not set up properly or you are missing a Leap token. 
-                If you did not configure dwave.system please see the installation guide
-                    
-                    https://docs.ocean.dwavesys.com/en/stable/overview/install.html
-                
-                If you have installed dwave.system but need more details on configuration see 
-
-                    https://docs.ocean.dwavesys.com/en/stable/overview/sapi.html
+                f"""Instantiation of a Leap hybrid solver failed with an {e} error.
+   
+                See https://docs.ocean.dwavesys.com/en/stable/overview/sapi.html for configuring 
+                access to Leap’s solvers.
                 """
             )
 
@@ -306,15 +301,19 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         y: Union[np.ndarray, pd.DataFrame, pd.Series, None] = None,
         **kwargs,
     ):
-        """Returns X selected for the features decided in `self.fit()`. If `self.fit()` has not been called yet then transform will first call it.
+        """Return features selected by the ``fit`` method. 
+        
+        Calls the ``fit`` method if needed.
 
         Args:
-            X (Union[np.ndarray, pd.DataFrame]): a matrix-like object where each row is an observation, and each column is a feature to be selected.
-            y (Union[np.ndarray, pd.DataFrame, pd.Series, None], optional): Outcome to be considered in feature selection. If provided, the correlation with the outcome will be considered,
-            if not then only the covariances among the features will be considered. Only used if `fit()` has not been called already. Defaults to None.
+            X: Features as a matrix-like object where columns are the features to be selected 
+                and rows are observations
+
+            y: Outcome variables to be incorporated in the correlation matrix along with 
+                the covariances among features. Used only if the ``fit`` has not been called already. 
 
         Returns:
-            (Union[np.ndarray, pd.DataFrame]): Same type as X, with the selected subset of features
+            (Union[np.ndarray, pd.DataFrame]): Selected subset of features.
         """
 
         if self.mask is None:
@@ -330,12 +329,12 @@ class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
         return X
 
     def unfit(self) -> None:
-        """undoes the `fit()` method"""
+        """Undo a previously executed ``fit`` method."""
         self.selected_columns = None
         self.mask = None
         return None
 
     def update_time_limit(self, time_limit: int) -> None:
-        """update the time limit"""
+        """Update the time limit."""
         self.time_limit = time_limit
         return None
