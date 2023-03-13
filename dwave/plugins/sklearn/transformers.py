@@ -16,15 +16,17 @@ import tempfile
 import logging
 import warnings
 
+from typing import Union
+
 import dimod
 import numpy as np
 import pandas as pd
 
-from sklearn.base import BaseEstimator
-from sklearn.feature_selection import SelectorMixin
 from dwave.system import LeapHybridCQMSampler
 from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
-from typing import Union
+from sklearn.base import BaseEstimator
+from sklearn.feature_selection import SelectorMixin
+
 from .utilities import corrcoef
 
 __all__ = ["SelectFromQuadraticModel"]

@@ -18,15 +18,15 @@ A minimal example of using the plugin:
 from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
 import numpy as np
 
-# generate uniformly random data, 10,000 observations and 300 features 
-data = np.random.uniform(-10,10, size = (10000,300))
+# generate uniformly random data, 10,000 observations and 300 features
+data = np.random.uniform(-10, 10, size=(10000, 300))
 
-outcome =  np.array([int(i) for i in (np.random.uniform(0,1, size = (10000,1)) > .5)])
+outcome = np.array([int(i) for i in (np.random.uniform(0, 1, size=(10000, 1)) > .5)])
 
 # instantiate the feature selection class
 selector = SelectFromQuadraticModel()
 
-# solve the feature-selection problem 
+# solve the feature-selection problem
 data_transformed = selector.fit_transform(data, outcome)
 ```
 
@@ -38,8 +38,8 @@ and check the returned error message for the required runtime.
 The feature selector can be re-instantiated with a longer time limit.
 
 ```python
-# instantiate the feature selection class with a longer time limit 
-selector = SelectFromQuadraticModel(time_limit = 200) 
+# instantiate the feature selection class with a longer time limit
+selector = SelectFromQuadraticModel(time_limit=200)
 ```
 
 ## Installation

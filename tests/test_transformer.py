@@ -14,11 +14,12 @@
 
 import unittest
 import unittest.mock
-from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
 
 import numpy as np
 import pandas as pd
 import dimod
+
+from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
 
 
 class MockCQM(dimod.ExactCQMSolver):
@@ -31,7 +32,7 @@ class MockCQM(dimod.ExactCQMSolver):
 
 @unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridCQMSampler", MockCQM)
 class TestTransformer(unittest.TestCase):
-    def __init__(self, methodName: str = None) -> None:
+    def __init__(self, methodName=None):
         super().__init__(methodName)
         self.rng = np.random.default_rng(138984)
         self.X_np = None
@@ -39,7 +40,7 @@ class TestTransformer(unittest.TestCase):
         self.X_pd = None
         self.y_pd = None
 
-    def create_data_numpy(self) -> None:
+    def create_data_numpy(self):
         """Idempotent function that instantiates a class variable containing test numpy data"""
 
         if self.X_np is None:
@@ -50,7 +51,7 @@ class TestTransformer(unittest.TestCase):
                 [int(i) for i in (self.rng.uniform(0, 1, size=(100, 1)) > 0.5)]
             )
 
-    def create_data_pd(self) -> None:
+    def create_data_pd(self):
         """Idempotent function that instantiates a class variable containing test pandas data
         derived from the numpy data. If `create_data_numpy` has not been called, this function
         will call it.
@@ -63,7 +64,7 @@ class TestTransformer(unittest.TestCase):
         if self.y_pd is None:
             self.y_pd = pd.DataFrame(self.y_np)
 
-    def setUp(self) -> None:
+    def setUp(self):
         super().setUp()
         self.create_data_pd()
 
@@ -354,7 +355,7 @@ class TestTransformer(unittest.TestCase):
 
 @unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridCQMSampler", MockCQM)
 class TestManyFeatures(unittest.TestCase):
-    def __init__(self, methodName: str = None) -> None:
+    def __init__(self, methodName=None):
         super().__init__(methodName)
         self.rng = np.random.default_rng(1023884)
         self.X_np = None
@@ -362,7 +363,7 @@ class TestManyFeatures(unittest.TestCase):
         self.X_pd = None
         self.y_pd = None
 
-    def create_data_numpy(self) -> None:
+    def create_data_numpy(self):
         """Idempotent function that instantiates a class variable containing test numpy data"""
 
         if self.X_np is None:
@@ -375,7 +376,7 @@ class TestManyFeatures(unittest.TestCase):
 
         return None
 
-    def create_data_pd(self) -> None:
+    def create_data_pd(self):
         """Idempotent function that instantiates a class variable containing test pandas data
         derived from the numpy data. If `create_data_numpy` has not been called, this function
         will call it.
@@ -388,7 +389,7 @@ class TestManyFeatures(unittest.TestCase):
         if self.y_pd is None:
             self.y_pd = pd.DataFrame(self.y_np)
 
-    def setUp(self) -> None:
+    def setUp(self):
         super().setUp()
         self.create_data_pd()
 
