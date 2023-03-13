@@ -12,331 +12,281 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-import tempfile
-import logging
-import warnings
+from __future__ import annotations
 
-from typing import Union
+import itertools
+import logging
+import tempfile
+import typing
+import warnings
 
 import dimod
 import numpy as np
-import pandas as pd
+import numpy.typing as npt
 
-from dwave.system import LeapHybridCQMSampler
 from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
+from dwave.system import LeapHybridCQMSampler
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectorMixin
+from sklearn.utils.validation import check_is_fitted
 
-from .utilities import corrcoef
+from dwave.plugins.sklearn.utilities import corrcoef
 
 __all__ = ["SelectFromQuadraticModel"]
 
 
-class SelectFromQuadraticModel(BaseEstimator, SelectorMixin):
-    """scikit-learn `SelectorMizin` which uses the `LeapHybridCQMSampler` solver."""
+class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
+    """Select features using a quadratic optimization problem solved on a hybrid solver.
 
-    acceptable_methods = ["correlation", "mutual information"]
+    Args:
+        alpha:
+            Hyperparameter between 0 and 1 that controls the relative weight of
+            the relevance and redundancy terms.  `alpha=1` places all weight on
+            relevance and selects all features, whereas `alpha=0` places all
+            weight on redundancy and selects no features.
+
+        num_features:
+            The number of features to select.
+
+        time_limit:
+            The time limit for the run on the hybrid solver.
+
+    """
+
+    ACCEPTED_METHODS = [
+        "correlation",
+        # "mutual information",  # todo
+        ]
 
     def __init__(
         self,
-        alpha: float = 0.5,
-        time_limit: int = 10,
-        n_default_feature: int = 10,
-        method: str = "correlation",
-        chunksize=None,
-    ) -> None:
-        """Instantiate `SelectFromQuadraticModel`
+        *,
+        alpha: float = .5,
+        method: str = "correlation",  # undocumented until there is another supported
+        num_features: int = 10,
+        time_limit: typing.Optional[float] = None,
+    ):
+        if not 0 <= alpha <= 1:
+            raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
 
-        Args:
-            alpha: Weighting hyperparameter for the objective . Must be between 0 and 1.
-            time_limit: Runtime limit for the Leap hybrid CQM solver.
-            n_default_feature: Number of features to select. Ignored if ``number_of_features`` 
-                is configured in the ``fit`` or ``fit_transform`` methods. 
-            method: Method of formulating the feature selection problem. Only "correlation" is supported. 
-            chunksize: Used for testing internal memory usage. 
-        """
-        super().__init__()
-
-        self.alpha = alpha
-        self.time_limit = time_limit
-        self.n_default_feature = n_default_feature
-        self.selected_columns = None
-        self.mask = None
-        if (self.alpha > 1) or (self.alpha < 0):
-            raise ValueError(f"alpha {self.alpha} is not between 0 and 1")
-
-        if self.time_limit <= 1:
-            raise ValueError("Time limit must be positive and greater than 1")
-
-        if method not in self.acceptable_methods:
+        if method not in self.ACCEPTED_METHODS:
             raise ValueError(
-                f"method was {method}, must be one of {SelectFromQuadraticModel.acceptable_methods}"
+                f"method must be one of {self.ACCEPTED_METHODS}, given {method}"
             )
 
-        self.method = method
+        if num_features <= 0:
+            raise ValueError(f"num_features must be a positive integer, given {num_features}")
 
-        self.chunksize = chunksize
+        self._alpha = alpha
+        self._method = method
+        self._num_features = num_features
+        self._time_limit = time_limit  # check this lazily
 
-    def _get_support_mask(self) -> list:
+    def __sklearn_is_fitted__(self) -> bool:
+        # used by `check_is_fitted()`
+        try:
+            self._mask
+        except AttributeError:
+            return False
+
+        return True
+
+    def _get_support_mask(self) -> np.ndarray[typing.Any, np.dtype[np.bool_]]:
         """Get the boolean mask indicating which features are selected
 
-        Args:
-
         Returns:
-          boolean array of shape [# input features]: An element is True iff its corresponding feature is selected for
-          retention.Returns
+          boolean array of shape [# input features]. An element is True iff its
+          corresponding feature is selected for retention.
 
         Raises:
             RuntimeError: This method will raise an error if it is run before `fit`
         """
+        check_is_fitted(self)
 
-        if self.mask is None:
+        try:
+            return self._mask
+        except AttributeError:
             raise RuntimeError("fit hasn't been run yet")
 
-        return self.mask
+    def correlation_cqm(
+        self,
+        X: npt.ArrayLike,
+        y: npt.ArrayLike,
+        *,
+        alpha: float,
+        num_features: int,
+        strict: bool = True,
+    ) -> dimod.ConstrainedQuadraticModel:
+        """Build a constrained quadratic model for feature selection.
 
-    def calculate_correlation_matrix(
-        self, X: np.ndarray, y: Union[np.ndarray, None] = None
-    ) -> np.ndarray:
-        """Calculate the correlation matrix. 
-        
-            Calculates correlations between the feature columns. Optionally calculates correlations with 
-            outcome for the matrix diagonals.
+        This method is based on maximizing influence and independence as
+        measured by correlation [Milne et al.]_.
 
         Args:
-            X:  Features as an array of shape ``(n_observations, n_features)``.
-            y: Outcome variables as an array of shape ``(n_observations, 1)``.
+            X:
+                2D array-like of feature vectors (numerical).
+            y:
+                1D array-like of class labels (numerical).
+            alpha:
+                Hyperparameter between 0 and 1 that controls the relative weight of
+                the relevance and redundancy terms.  `alpha=1` places all weight on
+                relevance and selects all features, whereas `alpha=0` places all
+                weight on redundancy and selects no features.
+            num_features:
+                The number of features to select.
+            strict:
+                If ``False`` the constraint is ``<=`` rather than ``==``.
 
         Returns:
-            np.ndarray:  Correlation matrix of shape ``(n_features, n_features)``. The diagonal is 1 
-            if no ``y`` is given; otherwise it is ``corr(x_i, y)``.
+            A constrained quadratic model.
+
+        .. [Milne et al.] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
+            Selection in Credit Scoring and Classification Using a Quantum Annealer."
+            1QBit; White Paper.
+            https://1qbit.com/whitepaper/optimal-feature-selection-in-credit-scoring-classification-using-quantum-annealer
         """
-        # generate correlation matrix, use tempfile and chunked process
 
-        f_x = tempfile.NamedTemporaryFile()
-        f_corr = tempfile.NamedTemporaryFile()
+        X = np.atleast_2d(np.asarray(X))
+        y = np.asarray(y)
 
-        X_memmapped = np.memmap(f_x, "float64", mode="w+", shape=X.shape)
-        X_memmapped[:] = X[:]
-        X_memmapped.flush()
+        if X.ndim != 2:
+            raise ValueError("X must be a 2-dimensional array-like")
 
-        correlation_matrix = np.memmap(
-            f_corr, "float64", mode="w+", shape=(X.shape[1], X.shape[1])
-        )
-        corrcoef(X_memmapped, out=correlation_matrix, copy=False, rowvar=False)
+        if y.ndim != 1:
+            raise ValueError("y must be a 1-dimensional array-like")
 
-        if y is None:
-            np.fill_diagonal(
-                correlation_matrix, [0 for _ in range(correlation_matrix.shape[1])]
-            )
-        else:
-            X_memmapped = (X_memmapped - X_memmapped.mean(axis=0)) / (
-                X_memmapped.std(axis=0)
-            )
-            y_standardized = (y - y.mean()) / y.std()
-            np.fill_diagonal(
-                correlation_matrix,
-                self.alpha * (1 / y.shape[0]) * (X_memmapped.T @ y_standardized),
-            )
+        if not 0 <= alpha <= 1:
+            raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
 
-        f_x.close()
+        if num_features <= 0:
+            raise ValueError(f"num_features must be a positive integer, given {num_features}")
 
-        return correlation_matrix, f_corr
+        cqm = dimod.ConstrainedQuadraticModel()
+        cqm.add_variables(dimod.BINARY, X.shape[1])
 
-    def calculate_mutual_information(self, X: np.ndarray, y: np.ndarray):
-        """Calculate mutual information matrix.
+        # add the k-hot constraint
+        cqm.add_constraint(((v, 1) for v in cqm.variables), '==' if strict else '<=', num_features)
 
-        Args:
-            X: Features as an array of shape ``(n_observations, n_features)``.
-            y: Outcome variables as an array of shape ``(n_observations, 1)``.
+        with tempfile.TemporaryFile() as fX, tempfile.TemporaryFile() as fout:
+            # we make a copy of X because we'll be modifying it in-place within
+            # some of the functions
+            X_copy = np.memmap(fX, X.dtype, mode="w+", shape=(X.shape[0], X.shape[1] + 1))
+            X_copy[:, :-1] = X
+            X_copy[:, -1] = y
 
-        Raises:
-            NotImplementedError: Always raised (this function is not currently implemented).
-        """
-        raise NotImplementedError("Mutual information is not yet implemented")
+            # make the matrix that will hold the correlations
+            correlations = np.memmap(
+                fout,
+                dtype=np.result_type(X, y),
+                mode="w+",
+                shape=(X_copy.shape[1], X_copy.shape[1]),
+                )
+
+            # main calculation. It modifies X in-place
+            corrcoef(X_copy, out=correlations, rowvar=False, copy=False)
+
+            # we don't care about the direction of correlation in terms of
+            # the penalty/quality
+            np.absolute(correlations, out=correlations)
+
+            # our objective
+            np.fill_diagonal(correlations, -correlations[:, -1] * alpha)
+
+            # Note: the full symmetric matrix (with both upper- and lower-diagonal
+            # entries for each correlation coefficient) is retained for consistency with
+            # the original formulation from Milne et al.
+            it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
+            cqm.set_objective((*it.multi_index, x) for x in it)
+
+        return cqm
 
     def fit(
         self,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Union[np.ndarray, pd.DataFrame, pd.Series, None] = None,
-        number_of_features: int = None,
-        strict: bool = True,
-    ):
+        X: npt.ArrayLike,
+        y: npt.ArrayLike,
+        *,
+        alpha: typing.Optional[float] = None,
+        num_features: typing.Optional[int] = None,
+        time_limit: typing.Optional[float] = None,
+    ) -> SelectFromQuadraticModel:
         """Select the features to keep.
 
         Args:
-            X: Features as a matrix-like object where columns are the features to be selected 
-                and rows are observations. If mutual information is selected, non-binary 
-                rows are assumed to be continuous.
-            y: Outcome variables to be incorporated in the correlation matrix along with 
-                the covariances among features. Required for mutual information. 
-            number_of_features: Number of features to be selected. If ``strict`` is ``True``, 
-                exactly this number of features is selected; otherwise this is an upper bound. 
-                If set to ``None``, ``n_default_feature`` features are selected.
-            strict: If ``True``, select exactly ``number_of_features`` features; otherwise, ``number_of_features`` 
-                is an upper bound. 
+            X:
+                2D array-like of feature vectors (numerical).
+            y:
+                1D array-like of class labels (numerical).
+            alpha:
+                Hyperparameter between 0 and 1 that controls the relative weight of
+                the relevance and redundancy terms.  `alpha=1` places all weight on
+                relevance and selects all features, whereas `alpha=0` places all
+                weight on redundancy and selects no features.
+                Defaults to the value provided to the constructor.
+            num_features:
+                The number of features to select.
+                Defaults to the value provided to the constructor.
+            time_limit:
+                The time limit for the run on the hybrid solver.
+                Defaults to the value provided to the constructor.
 
         Returns:
-            SelectFromQuadraticModel: This instance of `SelectFromQuadraticModel`
+            This instance of `SelectFromQuadraticModel`.
         """
-        if number_of_features is None:
-            number_of_features = self.n_default_feature
+        X = np.atleast_2d(np.asarray(X))
+        if X.ndim != 2:
+            raise ValueError("X must be a 2-dimensional array-like")
 
-        if hasattr(X, "toarray") and (not isinstance(X, pd.DataFrame)):
-            X = X.toarray()
+        # y is checked by the correlation method function
 
-        if self.method == "correlation":
-            model_matrix, f_model = self.calculate_correlation_matrix(X, y)
-        elif self.method == "mutual information":
-            if y is None:
-                raise ValueError("mutual infromation requires outcome")
-            model_matrix, f_model = self.calculate_mutual_information(X, y)
+        if alpha is None:
+            alpha = self._alpha
+        # alpha is checked by the correlation method function
+
+        if num_features is None:
+            num_features = self._num_features
+        # num_features is checked by the correlation method function
+
+        # time_limit is checked by the LeapHybridCQMSampelr
+
+        # if we already have fewer features than requested, just return
+        if num_features >= X.shape[1]:
+            self._mask = np.ones(X.shape[1], dtype=bool)
+            return self
+
+        if self._method == "correlation":
+            cqm = self.correlation_cqm(X, y, num_features=num_features, alpha=alpha)
+        # elif self._method == "mutual information":
+        #     cqm = self.mutual_information_cqm(X, y, num_features=num_features)
         else:
             raise ValueError(f"only methods {self.acceptable_methods} are implemented")
 
-        # feature selection formulation (same as example)
-
-        logging.info(f"constructing feature selection model")
-
-        if self.chunksize is not None:
-            chunksize = self.chunksize
-        else: 
-            chunksize = 100 
-
-        if X.shape[1] < chunksize:
-            logging.info("constructing BQM using dimod constructor from matrix")
-
-            feature_selection_bqm = dimod.BQM(model_matrix, "BINARY")
-        else:
-            logging.info("constructing bqm using chunked iteration")
-
-            feature_selection_bqm = dimod.BQM(vartype="BINARY")
-            feature_selection_bqm.add_variables_from(
-                {i: model_matrix[i, i] for i in range(model_matrix.shape[0])}
-            )
-
-            logging.info("variables and linear biases added")
-
-            for row_index in range(0, model_matrix.shape[0], chunksize):
-                for col_index in range(0, model_matrix.shape[1], chunksize):
-                    row_index_max = min(row_index + chunksize, model_matrix.shape[0])
-                    col_index_max = min(col_index + chunksize, model_matrix.shape[0])
-                    chunk = model_matrix[
-                        row_index:row_index_max, col_index:col_index_max
-                    ]
-                    quad_biases = [
-                        (i[0], i[1], j) for i, j in np.ndenumerate(chunk) if i[0] > i[1]
-                    ]
-                    feature_selection_bqm.add_interactions_from(quad_biases)
-
-        f_model.close()
-
-        logging.info("BQM created")
-
-        feature_selection_cqm = dimod.CQM()
-        feature_selection_cqm.set_objective(feature_selection_bqm)
-        
-        logging.info("CQM created (objective only)")
-
-        sense = "==" if strict else "<="
-
-        feature_selection_cqm.add_constraint_from_iterable(
-            [(var, 1) for var in feature_selection_cqm.variables],
-            sense,
-            number_of_features,
-        )
-
         try:
-            cqm_solver = LeapHybridCQMSampler()
+            sampler = LeapHybridCQMSampler()
         except (ConfigFileError, SolverAuthenticationError) as e:
             raise RuntimeError(
                 f"""Instantiation of a Leap hybrid solver failed with an {e} error.
-   
-                See https://docs.ocean.dwavesys.com/en/stable/overview/sapi.html for configuring 
+
+                See https://docs.ocean.dwavesys.com/en/stable/overview/sapi.html for configuring
                 access to Leap’s solvers.
                 """
             )
 
-        min_time_limit = cqm_solver.min_time_limit(feature_selection_cqm)
+        sampleset = sampler.sample_cqm(cqm, time_limit=self._time_limit)
 
-        if self.time_limit < min_time_limit:
-            raise ValueError(
-                f"the time limit must be at least for this problem {min_time_limit}"
-            )
+        # we can probably rely on the sample set having the same variable order
+        # but let's be explicit
+        filtered = sampleset.filter(lambda d: d.is_feasible)
 
-        feature_sample: dimod.SampleSet = cqm_solver.sample_cqm(
-            feature_selection_cqm, time_limit=self.time_limit
-        )
+        if len(filtered) == 0:
+            raise RuntimeError("no feasible solutions found by the hybrid solver")
 
-        logging.info("CQM sampling done")
+        lowest = filtered.first.sample
 
-        # use sample to get selected features
-
-        feature_sample_feasible = feature_sample.filter(lambda d: d.is_feasible)
-
-        if len(feature_sample_feasible) != 0:
-            feature_sample_best = feature_sample_feasible.first
-        else:
-            feature_sample_best = feature_sample.first
-            warnings.warn(
-                "No feasible selection found, using lowest energy", RuntimeWarning
-            )
-            raise RuntimeError()
-        selected_features = [
-            index for index, val in feature_sample_best.sample.items() if val == 1
-        ]
-
-        if isinstance(X, pd.DataFrame):
-            self.selected_columns = X.columns[selected_features]
-            self.mask = np.array([(col in self.selected_columns) for col in X.columns])
-        else:
-            self.selected_columns = selected_features
-            self.mask = np.array(
-                [(i in self.selected_columns) for i in range(X.shape[1])]
-            )
+        self._mask = np.fromiter((lowest[v] for v in cqm.variables),
+                                 count=cqm.num_variables(), dtype=bool)
 
         return self
 
-    def transform(
-        self,
-        X: Union[np.ndarray, pd.DataFrame],
-        y: Union[np.ndarray, pd.DataFrame, pd.Series, None] = None,
-        **kwargs,
-    ):
-        """Return features selected by the ``fit`` method. 
-        
-        Calls the ``fit`` method if needed.
-
-        Args:
-            X: Features as a matrix-like object where columns are the features to be selected 
-                and rows are observations
-
-            y: Outcome variables to be incorporated in the correlation matrix along with 
-                the covariances among features. Used only if the ``fit`` has not been called already. 
-
-        Returns:
-            (Union[np.ndarray, pd.DataFrame]): Selected subset of features.
-        """
-
-        if self.mask is None:
-            self.fit(X, y, **kwargs)
-
-        if isinstance(X, pd.DataFrame):
-            X = X.loc[:, self.selected_columns]
-        elif isinstance(X, np.ndarray):
-            X = X[:, self.selected_columns]
-        else:
-            X = super().transform(X)
-
-        return X
-
-    def unfit(self) -> None:
+    def unfit(self):
         """Undo a previously executed ``fit`` method."""
-        self.selected_columns = None
-        self.mask = None
-        return None
-
-    def update_time_limit(self, time_limit: int) -> None:
-        """Update the time limit."""
-        self.time_limit = time_limit
-        return None
+        del self._mask

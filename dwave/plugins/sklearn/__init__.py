@@ -14,7 +14,4 @@
 
 __version__ = '0.0.1'
 
-try:
-    from dwave.plugins.sklearn.feature_selection import *
-except:
-    pass
+from dwave.plugins.sklearn.transformers import *

@@ -14,62 +14,37 @@
 
 import unittest
 import unittest.mock
+import warnings
 
-import numpy as np
-import pandas as pd
 import dimod
+import numpy as np
+
+from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
+from dwave.system import LeapHybridCQMSampler
+from sklearn.datasets import load_iris
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
 
 from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
 
 
 class MockCQM(dimod.ExactCQMSolver):
-    def __init__(self):
-        super().__init__()
+    def sample_cqm(self, cqm: dimod.CQM, *, time_limit: float) -> dimod.SampleSet:
+        return super().sample_cqm(cqm)
 
     def min_time_limit(self, cqm):
         return 1
 
 
 @unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridCQMSampler", MockCQM)
-class TestTransformer(unittest.TestCase):
-    def __init__(self, methodName=None):
-        super().__init__(methodName)
-        self.rng = np.random.default_rng(138984)
-        self.X_np = None
-        self.y_np = None
-        self.X_pd = None
-        self.y_pd = None
-
-    def create_data_numpy(self):
-        """Idempotent function that instantiates a class variable containing test numpy data"""
-
-        if self.X_np is None:
-            self.X_np = self.rng.uniform(-10, 10, size=(100, 9))
-
-        if self.y_np is None:
-            self.y_np = np.array(
-                [int(i) for i in (self.rng.uniform(0, 1, size=(100, 1)) > 0.5)]
-            )
-
-    def create_data_pd(self):
-        """Idempotent function that instantiates a class variable containing test pandas data
-        derived from the numpy data. If `create_data_numpy` has not been called, this function
-        will call it.
-        """
-        self.create_data_numpy()
-
-        if self.X_pd is None:
-            self.X_pd = pd.DataFrame(self.X_np)
-
-        if self.y_pd is None:
-            self.y_pd = pd.DataFrame(self.y_np)
-
-    def setUp(self):
-        super().setUp()
-        self.create_data_pd()
+class TestSelectFromQuadraticModel(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        rng = np.random.default_rng(138984)
+        cls.X = rng.uniform(-10, 10, size=(100, 9))
+        cls.y = np.asarray(rng.uniform(0, 1, size=100) > 0.5, dtype=int)
 
     def test_init_good(self):
-        """Enforcing defaults and making sure variables are set"""
         a = SelectFromQuadraticModel()
 
         b = SelectFromQuadraticModel(alpha=0.1)
@@ -83,353 +58,85 @@ class TestTransformer(unittest.TestCase):
         self.assertIsInstance(c, SelectFromQuadraticModel)
         self.assertIsInstance(d, SelectFromQuadraticModel)
 
-        self.assertEqual(a.alpha, 0.5)
-        self.assertEqual(b.alpha, 0.1)
-        self.assertEqual(c.alpha, 0.1)
-        self.assertEqual(d.alpha, 0.5)
+        self.assertEqual(a._alpha, 0.5)
+        self.assertEqual(b._alpha, 0.1)
+        self.assertEqual(c._alpha, 0.1)
+        self.assertEqual(d._alpha, 0.5)
 
-        self.assertEqual(a.time_limit, 10)
-        self.assertEqual(b.time_limit, 10)
-        self.assertEqual(c.time_limit, 30)
-        self.assertEqual(d.time_limit, 15)
+        self.assertEqual(a._time_limit, None)
+        self.assertEqual(b._time_limit, None)
+        self.assertEqual(c._time_limit, 30)
+        self.assertEqual(d._time_limit, 15)
 
         self.assertIsInstance(
             SelectFromQuadraticModel(alpha=0), SelectFromQuadraticModel
         )
 
     def test_init_bad(self):
-        """Testing edges of initialization parameters"""
-
         self.assertRaises(ValueError, SelectFromQuadraticModel, alpha=-10)
         self.assertRaises(ValueError, SelectFromQuadraticModel, alpha=10)
-        self.assertRaises(ValueError, SelectFromQuadraticModel, time_limit=-100)
-        self.assertRaises(ValueError, SelectFromQuadraticModel, time_limit=0)
-        self.assertRaises(ValueError, SelectFromQuadraticModel, time_limit=1)
 
-    def test_fit_no_y(self):
-        """Test the fit method without an outcome variable specified"""
-
-        selector = SelectFromQuadraticModel(n_default_feature=7)
+    def test_fit(self):
+        selector = SelectFromQuadraticModel(num_features=7)
 
         # test default numpy
 
-        selector.fit(self.X_np)
-        self.assertEqual(len(selector.selected_columns), 7)
+        selector.fit(self.X, self.y)
+        self.assertEqual(sum(selector._mask), 7)
 
         try:
-            self.X_np[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-        # test default pandas
-        selector.fit(self.X_pd)
-        self.assertEqual(len(selector.selected_columns), 7)
-
-        try:
-            self.X_pd.loc[:, selector.selected_columns]
+            self.X[:, selector._mask]
         except Exception as e:
             self.fail(e)
 
         # test non-default numpy
 
-        selector.fit(self.X_np, number_of_features=5)
-        self.assertEqual(len(selector.selected_columns), 5)
+        selector.fit(self.X, self.y, num_features=5)
+        self.assertEqual(sum(selector._mask), 5)
 
         try:
-            self.X_np[:, selector.selected_columns]
+            self.X[:, selector._mask]
         except Exception as e:
             self.fail(e)
 
-        # test non-default pandas
-        selector.fit(self.X_pd, number_of_features=5)
-        self.assertEqual(len(selector.selected_columns), 5)
-
-        try:
-            self.X_pd.loc[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-        # test non-strict fit numpy
-        selector.fit(self.X_np, strict=False)
-        self.assertLessEqual(len(selector.selected_columns), 7)
-
-        try:
-            self.X_np[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-        # test non-strict fit pandas
-        selector.fit(self.X_pd, strict=False)
-        self.assertLessEqual(len(selector.selected_columns), 7)
-
-        try:
-            self.X_pd.loc[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-    def test_fit_y(self):
-        """Test the fit method with an outcome variable specified."""
-        selector = SelectFromQuadraticModel(n_default_feature=7)
-
-        # test default numpy
-
-        selector.fit(self.X_np, self.y_np)
-        self.assertEqual(len(selector.selected_columns), 7)
-
-        try:
-            self.X_np[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-        # test default pandas
-        selector.fit(self.X_pd, self.y_pd)
-        self.assertEqual(len(selector.selected_columns), 7)
-
-        try:
-            self.X_pd.loc[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-        # test non-default numpy
-
-        selector.fit(self.X_np, self.y_np, number_of_features=5)
-        self.assertEqual(len(selector.selected_columns), 5)
-
-        try:
-            self.X_np[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-        # test non-default pandas
-        selector.fit(self.X_pd, self.y_pd, number_of_features=5)
-        self.assertEqual(len(selector.selected_columns), 5)
-
-        try:
-            self.X_pd.loc[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-        # test non-strict fit numpy
-        selector.fit(self.X_np, self.y_np, strict=False)
-        self.assertLessEqual(len(selector.selected_columns), 7)
-
-        try:
-            self.X_np[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-        # test non-strict fit pandas
-        selector.fit(self.X_pd, self.y_pd, strict=False)
-        self.assertLessEqual(len(selector.selected_columns), 7)
-
-        try:
-            self.X_pd.loc[:, selector.selected_columns]
-        except Exception as e:
-            self.fail(e)
-
-    def test_transform_no_y(self):
-        """Test the transform method without the outcome variable specified"""
-        selector = SelectFromQuadraticModel(n_default_feature=7)
-
-        # test numpy
-        selector.fit(self.X_np, number_of_features=5)
-
-        x = selector.transform(self.X_np)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_np[:, selector.selected_columns]
-        np.testing.assert_array_equal(x, x_from_fit)
-
-        # test pandas
-        selector.fit(self.X_pd, number_of_features=5)
-
-        x = selector.transform(self.X_pd)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_pd.loc[:, selector.selected_columns]
-        self.assertTrue(x.equals(x_from_fit))
-
-    def test_transform_y(self):
-        """Test the transform method with the outcome variable specified"""
-        selector = SelectFromQuadraticModel(n_default_feature=7)
-
-        # test numpy
-        selector.fit(self.X_np, self.y_np, number_of_features=5)
-
-        x = selector.transform(self.X_np, self.y_np)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_np[:, selector.selected_columns]
-        np.testing.assert_array_equal(x, x_from_fit)
-
-        # test pandas
-        selector.fit(self.X_pd, self.y_pd, number_of_features=5)
-
-        x = selector.transform(self.X_pd, self.y_pd)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_pd.loc[:, selector.selected_columns]
-        self.assertTrue(x.equals(x_from_fit))
+    def test_fit_transform(self):
+        selector = SelectFromQuadraticModel(num_features=7)
 
         # test numpy without fit
-        selector.unfit()
-
-        x = selector.transform(self.X_np, self.y_np, number_of_features=5)
+        x = selector.fit_transform(self.X, self.y, num_features=5)
 
         self.assertEqual(x.shape[1], 5)
 
-        x_from_fit = self.X_np[:, selector.selected_columns]
+        x_from_fit = self.X[:, selector._mask]
         np.testing.assert_array_equal(x, x_from_fit)
 
-        # test pandas withoput fit
-        selector.unfit()
+    def test_pipeline(self):
+        X, y = load_iris(return_X_y=True)
 
-        x = selector.transform(self.X_pd, self.y_pd, number_of_features=5)
+        clf = Pipeline([
+          ('feature_selection', SelectFromQuadraticModel(num_features=2)),
+          ('classification', RandomForestClassifier())
+        ])
+        clf.fit(X, y)
 
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_pd.loc[:, selector.selected_columns]
-        self.assertTrue(x.equals(x_from_fit))
-
-    def test_fit_transform_no_y(self):
-        """Test the transform method without the outcome variable specified"""
-        selector = SelectFromQuadraticModel(n_default_feature=7)
-
-        # test numpy without fit
-        x = selector.fit_transform(self.X_np, number_of_features=5)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_np[:, selector.selected_columns]
-
-        np.testing.assert_array_equal(x, x_from_fit)
-
-        # test pandas withoput fit
-        x = selector.fit_transform(self.X_pd, number_of_features=5)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_pd.loc[:, selector.selected_columns]
-        self.assertTrue(x.equals(x_from_fit))
-
-    def test_fit_transform_y(self):
-        """Test the transform method with the outcome variable specified"""
-        selector = SelectFromQuadraticModel(n_default_feature=7)
-
-        # test numpy without fit
-        x = selector.fit_transform(self.X_np, self.y_np, number_of_features=5)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_np[:, selector.selected_columns]
-        np.testing.assert_array_equal(x, x_from_fit)
-
-        # test pandas withoput fit
-        x = selector.fit_transform(self.X_pd, self.y_pd, number_of_features=5)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_pd.loc[:, selector.selected_columns]
-        self.assertTrue(x.equals(x_from_fit))
-
-    def test_unfit(self):
-        """Test `unfit` function"""
-        selector = SelectFromQuadraticModel(n_default_feature=7)
-
-        selector.fit(self.X_np, self.y_np)
-
-        selector.unfit()
-
-        self.assertIsNone(selector.selected_columns)
-
-    def test_update_time_limit(self):
-        """Test the `update_time_limit` function."""
-        selector = SelectFromQuadraticModel(n_default_feature=7)
-        selector.update_time_limit(100)
-        self.assertEqual(selector.time_limit, 100)
+        clf.predict(X)
 
 
-@unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridCQMSampler", MockCQM)
-class TestManyFeatures(unittest.TestCase):
-    def __init__(self, methodName=None):
-        super().__init__(methodName)
-        self.rng = np.random.default_rng(1023884)
-        self.X_np = None
-        self.y_np = None
-        self.X_pd = None
-        self.y_pd = None
+class TestIntegration(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            LeapHybridCQMSampler()
+        except (ConfigFileError, SolverAuthenticationError, ValueError):
+            raise unittest.SkipTest("no hybrid solver available")
 
-    def create_data_numpy(self):
-        """Idempotent function that instantiates a class variable containing test numpy data"""
+    def test_pipeline(self):
+        X, y = load_iris(return_X_y=True)
 
-        if self.X_np is None:
-            self.X_np = self.rng.uniform(-10, 10, size=(100, 9))
+        clf = Pipeline([
+          ('feature_selection', SelectFromQuadraticModel(num_features=2)),
+          ('classification', RandomForestClassifier())
+        ])
+        clf.fit(X, y)
 
-        if self.y_np is None:
-            self.y_np = np.array(
-                [int(i) for i in (self.rng.uniform(0, 1, size=(100, 1)) > 0.5)]
-            )
-
-        return None
-
-    def create_data_pd(self):
-        """Idempotent function that instantiates a class variable containing test pandas data
-        derived from the numpy data. If `create_data_numpy` has not been called, this function
-        will call it.
-        """
-        self.create_data_numpy()
-
-        if self.X_pd is None:
-            self.X_pd = pd.DataFrame(self.X_np)
-
-        if self.y_pd is None:
-            self.y_pd = pd.DataFrame(self.y_np)
-
-    def setUp(self):
-        super().setUp()
-        self.create_data_pd()
-
-    def test_fit_transform_no_y(self):
-        """Test the transform method without the outcome variable specified"""
-        selector = SelectFromQuadraticModel(chunksize=2, n_default_feature=7)
-
-        # test numpy without fit
-        x = selector.fit_transform(self.X_np, number_of_features=5)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_np[:, selector.selected_columns]
-
-        np.testing.assert_array_equal(x, x_from_fit)
-
-        # test pandas withoput fit
-        x = selector.fit_transform(self.X_pd, number_of_features=5)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_pd.loc[:, selector.selected_columns]
-        self.assertTrue(x.equals(x_from_fit))
-
-    def test_fit_transform_y(self):
-        """Test the transform method with the outcome variable specified"""
-        selector = SelectFromQuadraticModel(chunksize=2, n_default_feature=7)
-
-        # test numpy without fit
-        x = selector.fit_transform(self.X_np, self.y_np, number_of_features=5)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_np[:, selector.selected_columns]
-        np.testing.assert_array_equal(x, x_from_fit)
-
-        # test pandas withoput fit
-        x = selector.fit_transform(self.X_pd, self.y_pd, number_of_features=5)
-
-        self.assertEqual(x.shape[1], 5)
-
-        x_from_fit = self.X_pd.loc[:, selector.selected_columns]
-        self.assertTrue(x.equals(x_from_fit))
+        clf.predict(X)

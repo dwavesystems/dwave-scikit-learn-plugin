@@ -59,14 +59,6 @@ Released under the Apache License 2.0
 Ocean's [contributing guide](https://docs.ocean.dwavesys.com/en/stable/contributing.html)
 has guidelines for contributing to Ocean packages.
 
-This package uses `black` for python formatting. Before commiting changes run 
-
-```bash
-black file-changed.py
-```
-
-T
-
 ### Release Notes
 
 **dwave-scikit-learn-plugin** makes use of [reno](https://docs.openstack.org/reno/) to manage its
