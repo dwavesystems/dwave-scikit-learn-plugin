@@ -23,6 +23,7 @@ from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
 from dwave.system import LeapHybridCQMSampler
 from sklearn.datasets import load_iris
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 
 from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
@@ -147,6 +148,22 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
 
     def test_repr(self):
         repr(SelectFromQuadraticModel())
+
+    def test_gridsearch(self):
+        rng = np.random.default_rng(42)
+        X = rng.uniform(-10, 10, size=(100, 9))
+        y = np.asarray(rng.uniform(0, 1, size=100) > 0.5, dtype=int)
+
+        pipe = Pipeline([
+          ('feature_selection', SelectFromQuadraticModel(num_features=2)),
+          ('classification', RandomForestClassifier())
+        ])
+
+        clf = GridSearchCV(pipe,
+                           param_grid=dict(
+                            feature_selection__num_features=[3],
+                            feature_selection__alpha=[0, .5]))
+        clf.fit(X, y)
 
 
 class TestIntegration(unittest.TestCase):
