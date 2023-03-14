@@ -30,7 +30,7 @@ selector = SelectFromQuadraticModel()
 data_transformed = selector.fit_transform(data, outcome)
 ```
 
-For large problems, the default runtime may be insufficient. You can use the CQM solvers's 
+For large problems, the default runtime may be insufficient. You can use the CQM solver's 
 [`min_time_limit`](https://docs.ocean.dwavesys.com/en/stable/docs_system/reference/generated/dwave.system.samplers.LeapHybridCQMSampler.min_time_limit.html)
 method to find the minimum accepted runtime for your problem; alternatively, simply submit as above 
 and check the returned error message for the required runtime. 
