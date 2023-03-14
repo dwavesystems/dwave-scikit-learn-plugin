@@ -280,8 +280,6 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         sampleset = sampler.sample_cqm(cqm, time_limit=self._time_limit)
 
-        # we can probably rely on the sample set having the same variable order
-        # but let's be explicit
         filtered = sampleset.filter(lambda d: d.is_feasible)
 
         if len(filtered) == 0:
