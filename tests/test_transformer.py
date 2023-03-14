@@ -141,6 +141,10 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         self.assertTrue(selector._get_support_mask()[0:3].all())
         self.assertFalse(selector._get_support_mask()[3:].any())
 
+    def test_xy_shape(self):
+        with self.assertRaises(ValueError):
+            SelectFromQuadraticModel(num_features=1).fit([[0, 1]], [1, 2])
+
 
 class TestIntegration(unittest.TestCase):
     @classmethod

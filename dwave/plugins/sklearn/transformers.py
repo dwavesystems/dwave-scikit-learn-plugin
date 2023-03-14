@@ -162,6 +162,9 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         if y.ndim != 1:
             raise ValueError("y must be a 1-dimensional array-like")
 
+        if y.shape[0] != X.shape[0]:
+            raise ValueError(f"requires: X.shape[0] == y.shape[0] but {X.shape[0]} != {y.shape[0]}")
+
         if not 0 <= alpha <= 1:
             raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
 
