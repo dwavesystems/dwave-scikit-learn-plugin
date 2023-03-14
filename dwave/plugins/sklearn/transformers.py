@@ -40,14 +40,14 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
     Args:
         alpha:
-                Hyperparameter between 0 and 1 that controls the relative weight of
-                the relevance and redundancy terms.
-                ``alpha=0`` places no weight on the quality of the features,
-                therefore the features will be selected as to minimize the
-                redundancy without any consideration to quality.
-                `alpha=1` places the maximum weight on the quality of the features,
-                and therefore will be equivalent to using
-                :class:`sklearn.feature_selection.SelectKBest`.
+            Hyperparameter between 0 and 1 that controls the relative weight of
+            the relevance and redundancy terms.
+            ``alpha=0`` places no weight on the quality of the features,
+            therefore the features will be selected as to minimize the
+            redundancy without any consideration to quality.
+            ``alpha=1`` places the maximum weight on the quality of the features,
+            and therefore will be equivalent to using
+            :class:`sklearn.feature_selection.SelectKBest`.
         num_features:
             The number of features to select.
         time_limit:
@@ -135,13 +135,14 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 ``alpha=0`` places no weight on the quality of the features,
                 therefore the features will be selected as to minimize the
                 redundancy without any consideration to quality.
-                `alpha=1` places the maximum weight on the quality of the features,
+                ``alpha=1`` places the maximum weight on the quality of the features,
                 and therefore will be equivalent to using
                 :class:`sklearn.feature_selection.SelectKBest`.
             num_features:
                 The number of features to select.
             strict:
-                If ``False`` the constraint is ``<=`` rather than ``==``.
+                If ``False`` the constraint on the number of selected features
+                is ``<=`` rather than ``==``.
 
         Returns:
             A constrained quadratic model.
@@ -230,10 +231,13 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 Class labels formatted as a numerical 1D array-like.
             alpha:
                 Hyperparameter between 0 and 1 that controls the relative weight of
-                the relevance and redundancy terms.  `alpha=1` places all weight on
-                relevance and selects all features, whereas `alpha=0` places all
-                weight on redundancy and selects no features.
-                Defaults to the value provided to the constructor.
+                the relevance and redundancy terms.
+                ``alpha=0`` places no weight on the quality of the features,
+                therefore the features will be selected as to minimize the
+                redundancy without any consideration to quality.
+                ``alpha=1`` places the maximum weight on the quality of the features,
+                and therefore will be equivalent to using
+                :class:`sklearn.feature_selection.SelectKBest`.
             num_features:
                 The number of features to select.
                 Defaults to the value provided to the constructor.
