@@ -79,10 +79,10 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         if num_features <= 0:
             raise ValueError(f"num_features must be a positive integer, given {num_features}")
 
-        self._alpha = alpha
-        self._method = method
-        self._num_features = num_features
-        self._time_limit = time_limit  # check this lazily
+        self.alpha = alpha
+        self.method = method
+        self.num_features = num_features
+        self.time_limit = time_limit  # check this lazily
 
     def __sklearn_is_fitted__(self) -> bool:
         # used by `check_is_fitted()`
@@ -258,11 +258,11 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         # y is checked by the correlation method function
 
         if alpha is None:
-            alpha = self._alpha
+            alpha = self.alpha
         # alpha is checked by the correlation method function
 
         if num_features is None:
-            num_features = self._num_features
+            num_features = self.num_features
         # num_features is checked by the correlation method function
 
         # time_limit is checked by the LeapHybridCQMSampelr
@@ -272,9 +272,9 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             self._mask = np.ones(X.shape[1], dtype=bool)
             return self
 
-        if self._method == "correlation":
+        if self.method == "correlation":
             cqm = self.correlation_cqm(X, y, num_features=num_features, alpha=alpha)
-        # elif self._method == "mutual information":
+        # elif self.method == "mutual information":
         #     cqm = self.mutual_information_cqm(X, y, num_features=num_features)
         else:
             raise ValueError(f"only methods {self.acceptable_methods} are implemented")
@@ -290,7 +290,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 """
             )
 
-        sampleset = sampler.sample_cqm(cqm, time_limit=self._time_limit)
+        sampleset = sampler.sample_cqm(cqm, time_limit=self.time_limit)
 
         filtered = sampleset.filter(lambda d: d.is_feasible)
 

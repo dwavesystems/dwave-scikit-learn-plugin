@@ -58,15 +58,15 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         self.assertIsInstance(c, SelectFromQuadraticModel)
         self.assertIsInstance(d, SelectFromQuadraticModel)
 
-        self.assertEqual(a._alpha, 0.5)
-        self.assertEqual(b._alpha, 0.1)
-        self.assertEqual(c._alpha, 0.1)
-        self.assertEqual(d._alpha, 0.5)
+        self.assertEqual(a.alpha, 0.5)
+        self.assertEqual(b.alpha, 0.1)
+        self.assertEqual(c.alpha, 0.1)
+        self.assertEqual(d.alpha, 0.5)
 
-        self.assertEqual(a._time_limit, None)
-        self.assertEqual(b._time_limit, None)
-        self.assertEqual(c._time_limit, 30)
-        self.assertEqual(d._time_limit, 15)
+        self.assertEqual(a.time_limit, None)
+        self.assertEqual(b.time_limit, None)
+        self.assertEqual(c.time_limit, 30)
+        self.assertEqual(d.time_limit, 15)
 
         self.assertIsInstance(
             SelectFromQuadraticModel(alpha=0), SelectFromQuadraticModel
@@ -144,6 +144,9 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
     def test_xy_shape(self):
         with self.assertRaises(ValueError):
             SelectFromQuadraticModel(num_features=1).fit([[0, 1]], [1, 2])
+
+    def test_repr(self):
+        repr(SelectFromQuadraticModel())
 
 
 class TestIntegration(unittest.TestCase):
