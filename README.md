@@ -19,9 +19,9 @@ from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
 import numpy as np
 
 # generate uniformly random data, 10,000 observations and 300 features
-data = np.random.uniform(-10, 10, size=(10000, 300))
+data = np.random.uniform(-10, 10, size=(10_000, 300))
 
-outcome = np.array([int(i) for i in (np.random.uniform(0, 1, size=(10000, 1)) > .5)])
+outcome = np.asarray(np.random.uniform(0, 1, size=10_000) > 0.5, dtype=int)
 
 # instantiate the feature selection class
 selector = SelectFromQuadraticModel()
