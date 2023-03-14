@@ -171,6 +171,9 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         if num_features <= 0:
             raise ValueError(f"num_features must be a positive integer, given {num_features}")
 
+        if X.shape[0] <= 1:
+            raise ValueError("X must have at least two rows")
+
         cqm = dimod.ConstrainedQuadraticModel()
         cqm.add_variables(dimod.BINARY, X.shape[1])
 

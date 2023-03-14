@@ -165,6 +165,13 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
                             feature_selection__alpha=[0, .5]))
         clf.fit(X, y)
 
+    def test_one_row(self):
+        X = [[-7.85717866, 1.93442648, 8.85760003]]
+        y = [1]
+
+        with self.assertRaises(ValueError):
+            SelectFromQuadraticModel(num_features=2).fit(X, y)
+
 
 class TestIntegration(unittest.TestCase):
     @classmethod
