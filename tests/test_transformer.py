@@ -121,6 +121,26 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
 
         clf.predict(X)
 
+    def test_alpha_0(self):
+        cqm = SelectFromQuadraticModel.correlation_cqm(self.X, self.y, num_features=3, alpha=0)
+        self.assertTrue(not any(cqm.objective.linear.values()))
+
+    def test_alpha_1(self):
+        rng = np.random.default_rng(42)
+
+        y = rng.uniform(size=1000)
+
+        # make the first three columns exactly match the test data
+        X = rng.uniform(size=(1000, 10))
+        X[:, 0] = X[:, 1] = X[:, 2] = y
+
+        selector = SelectFromQuadraticModel(num_features=3, alpha=1).fit(X, y)
+
+        # with alpha=1, we should see that only the quality matters, so the
+        # first three should be selected despite being perfectly correlated
+        self.assertTrue(selector._get_support_mask()[0:3].all())
+        self.assertFalse(selector._get_support_mask()[3:].any())
+
 
 class TestIntegration(unittest.TestCase):
     @classmethod

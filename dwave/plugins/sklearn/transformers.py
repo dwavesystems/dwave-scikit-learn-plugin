@@ -40,14 +40,16 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
     Args:
         alpha:
-            Hyperparameter between 0 and 1 that controls the relative weight of
-            the relevance and redundancy terms.  `alpha=1` places all weight on
-            relevance and selects all features, whereas `alpha=0` places all
-            weight on redundancy and selects no features.
-
+                Hyperparameter between 0 and 1 that controls the relative weight of
+                the relevance and redundancy terms.
+                ``alpha=0`` places no weight on the quality of the features,
+                therefore the features will be selected as to minimize the
+                redundancy without any consideration to quality.
+                `alpha=1` places the maximum weight on the quality of the features,
+                and therefore will be equivalent to using
+                :class:`sklearn.feature_selection.SelectKBest`.
         num_features:
             The number of features to select.
-
         time_limit:
             The time limit for the run on the hybrid solver.
 
@@ -108,8 +110,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         except AttributeError:
             raise RuntimeError("fit hasn't been run yet")
 
+    @staticmethod
     def correlation_cqm(
-        self,
         X: npt.ArrayLike,
         y: npt.ArrayLike,
         *,
@@ -129,9 +131,13 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 1D array-like of class labels (numerical).
             alpha:
                 Hyperparameter between 0 and 1 that controls the relative weight of
-                the relevance and redundancy terms.  `alpha=1` places all weight on
-                relevance and selects all features, whereas `alpha=0` places all
-                weight on redundancy and selects no features.
+                the relevance and redundancy terms.
+                ``alpha=0`` places no weight on the quality of the features,
+                therefore the features will be selected as to minimize the
+                redundancy without any consideration to quality.
+                `alpha=1` places the maximum weight on the quality of the features,
+                and therefore will be equivalent to using
+                :class:`sklearn.feature_selection.SelectKBest`.
             num_features:
                 The number of features to select.
             strict:
@@ -190,7 +196,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             np.absolute(correlations, out=correlations)
 
             # our objective
-            np.fill_diagonal(correlations, -correlations[:, -1] * alpha)
+            # we multiply by 2 because the matrix is symmetric
+            np.fill_diagonal(correlations, correlations[:, -1] * (-2 * alpha * num_features))
 
             # Note: the full symmetric matrix (with both upper- and lower-diagonal
             # entries for each correlation coefficient) is retained for consistency with
