@@ -126,9 +126,9 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         Args:
             X:
-                2D array-like of feature vectors (numerical).
+                Feature vectors formatted as a numerical 2D array-like.
             y:
-                1D array-like of class labels (numerical).
+                Class labels formatted as a numerical 1D array-like.
             alpha:
                 Hyperparameter between 0 and 1 that controls the relative weight of
                 the relevance and redundancy terms.
@@ -171,7 +171,12 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         cqm.add_variables(dimod.BINARY, X.shape[1])
 
         # add the k-hot constraint
-        cqm.add_constraint(((v, 1) for v in cqm.variables), '==' if strict else '<=', num_features)
+        cqm.add_constraint(
+            ((v, 1) for v in cqm.variables),
+            '==' if strict else '<=',
+            num_features,
+            label=f"{num_features}-hot",
+            )
 
         with tempfile.TemporaryFile() as fX, tempfile.TemporaryFile() as fout:
             # we make a copy of X because we'll be modifying it in-place within
@@ -188,7 +193,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 shape=(X_copy.shape[1], X_copy.shape[1]),
                 )
 
-            # main calculation. It modifies X in-place
+            # main calculation. It modifies X_copy in-place
             corrcoef(X_copy, out=correlations, rowvar=False, copy=False)
 
             # we don't care about the direction of correlation in terms of
@@ -220,9 +225,9 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         Args:
             X:
-                2D array-like of feature vectors (numerical).
+                Feature vectors formatted as a numerical 2D array-like.
             y:
-                1D array-like of class labels (numerical).
+                Class labels formatted as a numerical 1D array-like.
             alpha:
                 Hyperparameter between 0 and 1 that controls the relative weight of
                 the relevance and redundancy terms.  `alpha=1` places all weight on

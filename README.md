@@ -3,12 +3,12 @@
 
 # D-Wave `scikit-learn` Plugin
 
-This package provides a `scikit-learn` transformer for 
+This package provides a [scikit-learn](https://scikit-learn.org/) transformer for 
 [feature selection](https://en.wikipedia.org/wiki/Feature_selection) using a quantum-classical hybrid solver. 
 
 For an introduction to hybrid methods for feature selection, see the [Feature Selection example](https://github.com/dwave-examples/feature-selection-notebook) Jupyter Notebook.
 
-The package's main class, `sklearn.feature_selection.SelectorMixin`, can be used in any existing `sklearn` pipeline.
+The package's main class, `SelectFromQuadraticModel`, can be used in any existing `sklearn` pipeline.
 
 ## Examples
 
