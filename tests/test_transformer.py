@@ -30,7 +30,7 @@ from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
 
 
 class MockCQM(dimod.ExactCQMSolver):
-    def sample_cqm(self, cqm: dimod.CQM, *, time_limit: float) -> dimod.SampleSet:
+    def sample_cqm(self, cqm: dimod.CQM, *, time_limit: float, label: str) -> dimod.SampleSet:
         return super().sample_cqm(cqm)
 
     def min_time_limit(self, cqm):
