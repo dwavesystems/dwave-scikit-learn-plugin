@@ -215,7 +215,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             # entries for each correlation coefficient) is retained for consistency with
             # the original formulation from Milne et al.
             it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
-            cqm.set_objective((*it.multi_index, x) for x in it)
+            cqm.set_objective((*it.multi_index, x) for x in it if x)
 
         return cqm
 

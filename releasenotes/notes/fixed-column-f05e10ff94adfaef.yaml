@@ -1,0 +1,3 @@
+---
+fixes:
+  - Fix ``SelectFromQuadraticModel`` to handle the case when ``X`` has a column with all equal values.
