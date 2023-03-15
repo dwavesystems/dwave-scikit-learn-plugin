@@ -172,6 +172,23 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         with self.assertRaises(ValueError):
             SelectFromQuadraticModel(num_features=2).fit(X, y)
 
+    def test_fixed_column(self):
+        X = np.copy(self.X)
+
+        # fix two of the columns
+        X[:, 1] = 0
+        X[:, 5] = 1
+
+        cqm = SelectFromQuadraticModel.correlation_cqm(X, self.y, alpha=.5, num_features=5)
+
+        # in this case the linear bias for those two columns should be 0
+        self.assertEqual(cqm.objective.linear[1], 0)
+        self.assertEqual(cqm.objective.linear[5], 0)
+
+        # as should the quadratic biases
+        self.assertEqual(cqm.objective.degree(1), 0)
+        self.assertEqual(cqm.objective.degree(5), 0)
+
 
 class TestIntegration(unittest.TestCase):
     @classmethod

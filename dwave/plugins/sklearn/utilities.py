@@ -67,6 +67,9 @@ def corrcoef(x: npt.ArrayLike, *,
     It does not support the full range of arguments accepted by
     :func:`numpy.corrcoef`.
 
+    Additionally, in the case that a row of ``x`` is fixed, this method
+    will return a correlation value of 0 rather than :class:`numpy.nan`.
+
     Args:
         x: See :func:`numpy.corrcoef`.
 
@@ -89,8 +92,11 @@ def corrcoef(x: npt.ArrayLike, *,
         # nan if incorrect value (nan, inf, 0), 1 otherwise
         return c / c
     stddev = np.sqrt(d.real)
-    c /= stddev[:, None]
-    c /= stddev[None, :]
+
+    # the places that stddev == 0 are exactly the places that the columns
+    # are fixed. We can safely ignore those when dividing
+    np.divide(c, stddev[:, None], out=c, where=stddev[:, None] != 0)
+    np.divide(c, stddev[None, :], out=c, where=stddev[None, :] != 0)
 
     # Clip real and imaginary parts to [-1, 1].  This does not guarantee
     # abs(a[i,j]) <= 1 for complex arrays, but is the best we can do without
