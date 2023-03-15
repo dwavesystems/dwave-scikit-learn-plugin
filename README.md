@@ -12,11 +12,12 @@ The package's main class, `SelectFromQuadraticModel`, can be used in any existin
 
 ## Examples
 
-A minimal example of using the plugin: 
+A minimal example of using the plugin to select 20 of 30 features of an `sklearn` dataset: 
 
 ```python
 >>> from sklearn.datasets import load_breast_cancer
 >>> from dwave.plugins.sklearn import SelectFromQuadraticModel
+... 
 >>> X, y = load_breast_cancer(return_X_y=True)
 >>> X.shape
 (569, 30)
@@ -33,7 +34,7 @@ and check the returned error message for the required runtime.
 The feature selector can be re-instantiated with a longer time limit.
 
 ```python
->>> selector = SelectFromQuadraticModel(time_limit=200)
+>>> X_new = SelectFromQuadraticModel(num_features=20, time_limit=200).fit_transform(X, y)
 ```
 
 ## Installation
