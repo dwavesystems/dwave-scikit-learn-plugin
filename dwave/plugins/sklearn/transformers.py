@@ -293,7 +293,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 """
             )
 
-        sampleset = sampler.sample_cqm(cqm, time_limit=self.time_limit, label="feature-selection")
+        sampleset = sampler.sample_cqm(cqm, time_limit=self.time_limit,
+                                       label=f"{self.__module__}.{type(self).__qualname__}")
 
         filtered = sampleset.filter(lambda d: d.is_feasible)
 
