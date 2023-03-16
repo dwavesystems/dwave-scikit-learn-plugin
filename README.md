@@ -12,22 +12,18 @@ The package's main class, `SelectFromQuadraticModel`, can be used in any existin
 
 ## Examples
 
-A minimal example of using the plugin: 
+A minimal example of using the plugin to select 20 of 30 features of an `sklearn` dataset: 
 
 ```python
-from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
-import numpy as np
-
-# generate uniformly random data, 10,000 observations and 300 features
-data = np.random.uniform(-10, 10, size=(10_000, 300))
-
-outcome = np.asarray(np.random.uniform(0, 1, size=10_000) > 0.5, dtype=int)
-
-# instantiate the feature selection class
-selector = SelectFromQuadraticModel()
-
-# solve the feature-selection problem
-data_transformed = selector.fit_transform(data, outcome)
+>>> from sklearn.datasets import load_breast_cancer
+>>> from dwave.plugins.sklearn import SelectFromQuadraticModel
+... 
+>>> X, y = load_breast_cancer(return_X_y=True)
+>>> X.shape
+(569, 30)
+>>> X_new = SelectFromQuadraticModel(num_features=20).fit_transform(X, y)
+>>> X_new.shape
+(569, 20)
 ```
 
 For large problems, the default runtime may be insufficient. You can use the CQM solver's 
@@ -38,8 +34,7 @@ and check the returned error message for the required runtime.
 The feature selector can be re-instantiated with a longer time limit.
 
 ```python
-# instantiate the feature selection class with a longer time limit
-selector = SelectFromQuadraticModel(time_limit=200)
+>>> X_new = SelectFromQuadraticModel(num_features=20, time_limit=200).fit_transform(X, y)
 ```
 
 ## Installation
