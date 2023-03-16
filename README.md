@@ -4,11 +4,16 @@
 # D-Wave `scikit-learn` Plugin
 
 This package provides a [scikit-learn](https://scikit-learn.org/) transformer for 
-[feature selection](https://en.wikipedia.org/wiki/Feature_selection) using a quantum-classical hybrid solver. 
+[feature selection](https://en.wikipedia.org/wiki/Feature_selection) using a
+quantum-classical [hybrid solver](https://docs.ocean.dwavesys.com/en/stable/concepts/hybrid.html).
 
-For an introduction to hybrid methods for feature selection, see the [Feature Selection example](https://github.com/dwave-examples/feature-selection-notebook) Jupyter Notebook.
+This plugin makes use of a Leap™ quantum-classical hybrid solver. Developers can get started by
+[signing up](https://cloud.dwavesys.com/leap/signup/) for the Leap quantum cloud service for free.
+Those seeking a more collaborative approach and assistance with building a production application can
+reach out to D-Wave [directly](https://www.dwavesys.com/solutions-and-products/professional-services/) and also explore the feature selection [offering](https://aws.amazon.com/marketplace/pp/prodview-bsrc3yuwgjbo4) in AWS Marketplace.
 
 The package's main class, `SelectFromQuadraticModel`, can be used in any existing `sklearn` pipeline.
+For an introduction to hybrid methods for feature selection, see the [Feature Selection for CQM](https://github.com/dwave-examples/feature-selection-cqm).
 
 ## Examples
 
