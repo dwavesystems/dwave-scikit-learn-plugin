@@ -17,6 +17,8 @@ For an introduction to hybrid methods for feature selection, see the [Feature Se
 
 ## Examples
 
+### Basic Usage
+
 A minimal example of using the plugin to select 20 of 30 features of an `sklearn` dataset: 
 
 ```python
@@ -40,6 +42,39 @@ The feature selector can be re-instantiated with a longer time limit.
 
 ```python
 >>> X_new = SelectFromQuadraticModel(num_features=20, time_limit=200).fit_transform(X, y)
+```
+
+### Tuning
+
+It is possible to use `SelectFromQuadraticModel` with scikit-learn's
+[hyper-parameter optimizers](https://scikit-learn.org/stable/modules/classes.html#hyper-parameter-optimizers).
+
+For example, the number of features can be tuned using a grid search. **Please note that this will
+submit many problems to the hybrid solver.**
+
+```python
+>>> import numpy as np
+...
+>>> from sklearn.datasets import load_breast_cancer
+>>> from sklearn.ensemble import RandomForestClassifier
+>>> from sklearn.model_selection import GridSearchCV
+>>> from sklearn.pipeline import Pipeline
+>>> from dwave.plugins.sklearn import SelectFromQuadraticModel
+...
+>>> X, y = load_breast_cancer(return_X_y=True)
+...
+>>> num_features = X.shape[1]
+>>> searchspace = np.linspace(1, num_features, num=5, dtype=int, endpoint=True)
+...
+>>> pipe = Pipeline([
+>>>   ('feature_selection', SelectFromQuadraticModel()),
+>>>   ('classification', RandomForestClassifier())
+>>> ])
+...
+>>> clf = GridSearchCV(pipe, param_grid=dict(feature_selection__num_features=searchspace))
+>>> search = clf.fit(X, y)
+>>> print(search.best_params_)
+{'feature_selection__num_features': 22}
 ```
 
 ## Installation
