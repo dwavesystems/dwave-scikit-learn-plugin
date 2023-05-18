@@ -46,7 +46,7 @@ The feature selector can be re-instantiated with a longer time limit.
 
 ### Tuning
 
-It is possible to use `SelectFromQuadraticModel` with scikit-learn's
+You can use `SelectFromQuadraticModel` with scikit-learn's
 [hyper-parameter optimizers](https://scikit-learn.org/stable/modules/classes.html#hyper-parameter-optimizers).
 
 For example, the number of features can be tuned using a grid search. **Please note that this will
