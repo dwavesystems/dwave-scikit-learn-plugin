@@ -13,5 +13,13 @@
 #    limitations under the License.
 
 from setuptools import setup
+from Cython.Build import cythonize
+import numpy
 
-setup()
+setup(
+    install_requires=[
+        "numpy",
+    ],
+    ext_modules = cythonize(["./dwave/plugins/sklearn/nearest_neighbors.pyx"]), 
+    include_dirs=[numpy.get_include()]
+)
