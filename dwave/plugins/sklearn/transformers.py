@@ -31,6 +31,7 @@ from sklearn.feature_selection import SelectorMixin
 from sklearn.utils.validation import check_is_fitted
 
 from dwave.plugins.sklearn.utilities import corrcoef
+from dwave.plugins.sklearn.nearest_neighbors import calculate_mi
 
 __all__ = ["SelectFromQuadraticModel"]
 
@@ -218,6 +219,34 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             cqm.set_objective((*it.multi_index, x) for x in it if x)
 
         return cqm
+    
+    @staticmethod
+    def mutual_information_cqm(
+        X: npt.ArrayLike,
+        y: npt.ArrayLike,
+        *,
+        alpha: float,
+        num_features: int,
+        strict: bool = True,
+    ) -> dimod.ConstrainedQuadraticModel:
+        
+        cqm = dimod.ConstrainedQuadraticModel()
+        cqm.add_variables(dimod.BINARY, X.shape[1])
+
+        # add the k-hot constraint
+        cqm.add_constraint(
+            ((v, 1) for v in cqm.variables),
+            '==' if strict else '<=',
+            num_features,
+            label=f"{num_features}-hot",
+            )
+        
+        mi_matrix = calculate_mi(X, y)
+        
+        it = np.nditer(mi_matrix, flags=['multi_index'], op_flags=[['readonly']])
+        cqm.set_objective((*it.multi_index, x) for x in it if x)
+
+        return cqm
 
     def fit(
         self,
@@ -277,8 +306,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         if self.method == "correlation":
             cqm = self.correlation_cqm(X, y, num_features=num_features, alpha=alpha)
-        # elif self.method == "mutual information":
-        #     cqm = self.mutual_information_cqm(X, y, num_features=num_features)
+        elif self.method == "mutual information":
+            cqm = self.mutual_information_cqm(X, y, num_features=num_features)
         else:
             raise ValueError(f"only methods {self.acceptable_methods} are implemented")
 
