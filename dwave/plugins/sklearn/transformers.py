@@ -185,7 +185,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             label=f"{num_features}-hot",
             )
 
-        with tempfile.TemporaryFile() as fX, tempfile.TemporaryFile() as fout:
+        with tempfile.TemporaryFile() as fX, tempfile.TemporaryFile() as fout,\
+             tempfile.TemporaryFile() as targetcor_out:
             # we make a copy of X because we'll be modifying it in-place within
             # some of the functions
             X_copy = np.memmap(fX, X.dtype, mode="w+", shape=(X.shape[0], X.shape[1] + 1))
@@ -199,23 +200,30 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 mode="w+",
                 shape=(X_copy.shape[1], X_copy.shape[1]),
                 )
-
+            # make the matrix that will hold the output correlations
+            target_correlations = np.memmap(
+                targetcor_out,
+                dtype=np.result_type(X, y),
+                mode="w+",
+                shape=(X_copy.shape[1], 1),
+                )
             # main calculation. It modifies X_copy in-place
             corrcoef(X_copy, out=correlations, rowvar=False, copy=False)
-
             # we don't care about the direction of correlation in terms of
             # the penalty/quality
             np.absolute(correlations, out=correlations)
-
+            # copying the correlations with the target column
+            target_correlations = correlations[:, -1].copy()
+            # multiplying all terms with (1 - alpha)
+            np.multiply(correlations, (1 - alpha), out=correlations)
             # our objective
-            # we multiply by 2 because the matrix is symmetric
-            np.fill_diagonal(correlations, correlations[:, -1] * (-2 * alpha * num_features))
-
-            # Note: the full symmetric matrix (with both upper- and lower-diagonal
-            # entries for each correlation coefficient) is retained for consistency with
-            # the original formulation from Milne et al.
+            # we multiply by num_features to have consistent performance 
+            # with the increase of the number of features
+            np.fill_diagonal(correlations, target_correlations * (- alpha * num_features))
+            # Note: we only add terms on and above the diagonal
             it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
-            cqm.set_objective((*it.multi_index, x) for x in it if x)
+            cqm.set_objective((*it.multi_index, x) for x in it 
+                              if it.multi_index[0] <= it.multi_index[1] and x)
 
         return cqm
 
