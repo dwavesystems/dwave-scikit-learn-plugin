@@ -126,6 +126,10 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         cqm = SelectFromQuadraticModel.correlation_cqm(self.X, self.y, num_features=3, alpha=0)
         self.assertTrue(not any(cqm.objective.linear.values()))
 
+    def test_alpha_1_no_quadratic(self):
+        cqm = SelectFromQuadraticModel.correlation_cqm(self.X, self.y, num_features=3, alpha=1)
+        self.assertTrue(not any(cqm.objective.quadratic.values()))
+        
     def test_alpha_1(self):
         rng = np.random.default_rng(42)
 

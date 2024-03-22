@@ -1,0 +1,3 @@
+---
+fixes:
+  - Multiply off-diagonal terms of the correlation matrix with 1-alpha.
