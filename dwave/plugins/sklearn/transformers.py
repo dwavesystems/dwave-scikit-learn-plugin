@@ -198,22 +198,18 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 dtype=np.result_type(X, y),
                 mode="w+",
                 shape=(X_copy.shape[1], X_copy.shape[1]),
-                )
-
+                )            
             # main calculation. It modifies X_copy in-place
             corrcoef(X_copy, out=correlations, rowvar=False, copy=False)
-
             # we don't care about the direction of correlation in terms of
             # the penalty/quality
             np.absolute(correlations, out=correlations)
-
+            # multiplying all but last columns and rows with (1 - alpha)
+            np.multiply(correlations[:-1, :-1], (1 - alpha), out=correlations[:-1, :-1])
             # our objective
-            # we multiply by 2 because the matrix is symmetric
-            np.fill_diagonal(correlations, correlations[:, -1] * (-2 * alpha * num_features))
-
-            # Note: the full symmetric matrix (with both upper- and lower-diagonal
-            # entries for each correlation coefficient) is retained for consistency with
-            # the original formulation from Milne et al.
+            # we multiply by num_features to have consistent performance 
+            # with the increase of the number of features
+            np.fill_diagonal(correlations, correlations[:, -1] * (- alpha * num_features))
             it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
             cqm.set_objective((*it.multi_index, x) for x in it if x)
 
