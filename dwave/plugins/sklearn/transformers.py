@@ -210,7 +210,6 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             # we multiply by num_features to have consistent performance 
             # with the increase of the number of features
             np.fill_diagonal(correlations, correlations[:, -1] * (- alpha * num_features))
-            # Note: we only add terms on and above the diagonal
             it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
             cqm.set_objective((*it.multi_index, x) for x in it if x)
 
