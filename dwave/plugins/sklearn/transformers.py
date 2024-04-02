@@ -212,8 +212,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             np.fill_diagonal(correlations, correlations[:, -1] * (- alpha * num_features))
             # Note: we only add terms on and above the diagonal
             it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
-            cqm.set_objective((*it.multi_index, x) for x in it 
-                              if it.multi_index[0] <= it.multi_index[1] and x)
+            cqm.set_objective((*it.multi_index, x) for x in it if x)
 
         return cqm
 
