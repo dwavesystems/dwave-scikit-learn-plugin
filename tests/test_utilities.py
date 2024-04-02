@@ -51,8 +51,10 @@ import unittest
 
 import numpy as np
 
-from dwave.plugins.sklearn.utilities import corrcoef, cov, dot_2d
-
+from dwave.plugins.sklearn.utilities import corrcoef, cov, dot_2d, _compute_cmi_c, _compute_cmi_d
+from scipy.special import digamma
+from sklearn.feature_selection._mutual_info import _compute_mi
+from sklearn.neighbors import KDTree
 
 class TestCorrCoef(unittest.TestCase):
     def test_agreement(self):
@@ -178,3 +180,101 @@ class TestDot2D(unittest.TestCase):
                 out = np.memmap(fout, "float64", mode="w+", shape=(X.shape[0], X.shape[0]))
 
                 dot_2d(X, X.T, out=out)
+
+
+class TestMI(unittest.TestCase):
+    def test_cmi(self):
+        """
+        We test the algorithm using the formula `I(x;y|z) = I(x;y) + I(z;y) - I(z;y|x)`.
+        Since the mutual information data is an sklearn function,
+        :func:`sklearn.feature_selection._mutual_info._compute_mi`
+        it is highly likely that formula is valid only if our algorithm is correct.
+        For continous variables the formula may still break for some seeds
+        """
+        np.random.seed(42)
+        n_samples, n_neighbors = 4003, 4
+        # Test continuous implementation
+        Xy = np.random.randn(n_samples, 3)
+        cmi_ij = _compute_cmi_c(Xy[:, 0], Xy[:, 1], Xy[:, 2], n_neighbors=n_neighbors)
+        cmi_ji = _compute_cmi_c(Xy[:, 1], Xy[:, 0], Xy[:, 2], n_neighbors=n_neighbors)
+        mi_i = _compute_mi(Xy[:, 0], Xy[:, 2], False, False, n_neighbors=n_neighbors)
+        mi_j = _compute_mi(Xy[:, 1], Xy[:, 2], False, False, n_neighbors=n_neighbors)
+        self.assertAlmostEqual(
+            max(cmi_ij + mi_j - mi_i, 0), cmi_ji, places=3,
+            msg="The formula for continuous conditional mutual information is violated")
+
+        # Test discrete implementation       
+        n_samples, n_ss = 103, 51
+        xi = np.random.randint(0, 11, (n_samples, ))
+        xj = np.hstack((
+            np.random.randint(-2, 1, (n_ss, )),
+            np.random.randint(10, 14, (n_samples-n_ss, ))))
+        np.random.shuffle(xi)
+        np.random.shuffle(xj)
+        y = np.random.randint(-12, -10, (n_samples, ))
+        cmi_ij = _compute_cmi_d(xi, xj, y)
+        cmi_ji = _compute_cmi_d(xj, xi, y)
+        mi_i = _compute_mi(xi, y, True, True, n_neighbors=n_neighbors)
+        mi_j = _compute_mi(xj, y, True, True, n_neighbors=n_neighbors)
+        self.assertAlmostEqual(
+            cmi_ij + mi_j - mi_i, cmi_ji, places=5,
+            msg="The formula for discrete conditional mutual information is violated")
+
+    def test_implementation(self):
+        # methods from https://github.com/jannisteunissen/mutual_information
+        def _compute_cmi_t(x, z, y, n_neighbors):
+            n_samples = len(x)
+
+            x = x.reshape(-1, 1)
+            y = y.reshape(-1, 1)
+            z = z.reshape(-1, 1)
+            xyz = np.hstack((x, y, z))
+            k = np.full(n_samples, n_neighbors)
+            radius = get_radius_kneighbors(xyz, n_neighbors)
+
+            nxz = num_points_within_radius(np.hstack((x, z)), radius)
+            nyz = num_points_within_radius(np.hstack((y, z)), radius)
+            nz = num_points_within_radius(z, radius)
+
+            cmi = max(0, np.mean(digamma(k)) - np.mean(digamma(nxz + 1))
+                    - np.mean(digamma(nyz + 1)) + np.mean(digamma(nz + 1)))
+            return cmi
+
+        def get_radius_kneighbors(x, n_neighbors):
+            """Determine smallest radius around x containing n_neighbors neighbors
+
+            :param x: ndarray, shape (n_samples, n_dim)
+            :param n_neighbors: number of neighbors
+            :returns: radius, shape (n_samples,)
+            """
+            # Use KDTree for simplicity (sometimes a ball tree could be faster)
+            kd = KDTree(x, metric="chebyshev")
+
+            # Results include point itself, therefore n_neighbors+1
+            neigh_dist = kd.query(x, k=n_neighbors+1)[0]
+
+            # Take radius slightly larger than distance to last neighbor
+            radius = np.nextafter(neigh_dist[:, -1], 0)
+            return radius
+
+        def num_points_within_radius(x, radius):
+            """For each point, determine the number of other points within a given radius
+
+            :param x: ndarray, shape (n_samples, n_dim)
+            :param radius: radius, shape (n_samples,)
+            :returns: number of points within radius
+            """
+            kd = KDTree(x, metric="chebyshev")
+            nx = kd.query_radius(x, radius, count_only=True, return_distance=False)
+            return np.array(nx) - 1.0
+
+        n_samples, n_neighbors = 103, 4
+        # Test continuous implementation
+        Xy = np.random.randn(n_samples, 3)
+        cmi_t = _compute_cmi_t(Xy[:,0], Xy[:,1], Xy[:,2], n_neighbors=n_neighbors)
+
+        cmi_c = _compute_cmi_c(Xy[:,0], Xy[:,1], Xy[:,2], n_neighbors=n_neighbors)
+
+        self.assertAlmostEqual(
+            cmi_t, cmi_c, places=5,
+            msg="The algorithm doesn't match the original implementation")

@@ -30,7 +30,7 @@ from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectorMixin
 from sklearn.utils.validation import check_is_fitted
 
-from dwave.plugins.sklearn.utilities import corrcoef
+from dwave.plugins.sklearn.utilities import corrcoef, estimate_mi_matrix
 
 __all__ = ["SelectFromQuadraticModel"]
 
@@ -57,7 +57,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
     ACCEPTED_METHODS = [
         "correlation",
-        # "mutual information",  # todo
+        "mutual_information",
         ]
 
     def __init__(
@@ -153,27 +153,6 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             https://1qbit.com/whitepaper/optimal-feature-selection-in-credit-scoring-classification-using-quantum-annealer
         """
 
-        X = np.atleast_2d(np.asarray(X))
-        y = np.asarray(y)
-
-        if X.ndim != 2:
-            raise ValueError("X must be a 2-dimensional array-like")
-
-        if y.ndim != 1:
-            raise ValueError("y must be a 1-dimensional array-like")
-
-        if y.shape[0] != X.shape[0]:
-            raise ValueError(f"requires: X.shape[0] == y.shape[0] but {X.shape[0]} != {y.shape[0]}")
-
-        if not 0 <= alpha <= 1:
-            raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
-
-        if num_features <= 0:
-            raise ValueError(f"num_features must be a positive integer, given {num_features}")
-
-        if X.shape[0] <= 1:
-            raise ValueError("X must have at least two rows")
-
         cqm = dimod.ConstrainedQuadraticModel()
         cqm.add_variables(dimod.BINARY, X.shape[1])
 
@@ -212,10 +191,112 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             np.fill_diagonal(correlations, correlations[:, -1] * (- alpha * num_features))
             # Note: we only add terms on and above the diagonal
             it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
-            cqm.set_objective((*it.multi_index, x) for x in it 
-                              if it.multi_index[0] <= it.multi_index[1] and x)
+            print(correlations)
+            cqm.set_objective((*it.multi_index, x) for x in it if x)
 
         return cqm
+
+    @staticmethod
+    def mutual_information_cqm(        
+        X: npt.ArrayLike,
+        y: npt.ArrayLike,
+        *,
+        num_features: int,
+        alpha: float = 0.5,
+        strict: bool = True,
+        conditional: bool = True,
+        discrete_features: typing.Union[str, npt.ArrayLike] = "auto",
+        discrete_target: bool = False,
+        copy: bool = True,
+        n_neighbors: int = 4,
+        n_workers: int = 1,
+        random_state: typing.Union[None, int] = None,
+        ) -> dimod.ConstrainedQuadraticModel:
+        """Build a constrained quadratic model for feature selection.
+
+        If ``conditional`` is True then the conditional mutual information 
+        criterion from [2] is used, and if ``conditional`` is False then
+        mutual information based criterion from [1] is used.
+        
+        For computation of mutual information and conditional mutual information 
+        
+        
+        Args:
+            X:
+                Feature vectors formatted as a numerical 2D array-like.
+            y:
+                Class labels formatted as a numerical 1D array-like.
+            alpha:
+                Hyperparameter between 0 and 1 that controls the relative weight of
+                the relevance and redundancy terms.
+                ``alpha=0`` places no weight on the quality of the features,
+                therefore the features will be selected as to minimize the
+                redundancy without any consideration to quality.
+                ``alpha=1`` places the maximum weight on the quality of the features,
+                and therefore will be equivalent to using
+                :class:`sklearn.feature_selection.SelectKBest`.
+            num_features:
+                The number of features to select.
+            strict:
+                If ``False`` the constraint on the number of selected features
+                is ``<=`` rather than ``==``.
+            conditional: bool, default=True
+                Whether to compute the off-diagonal terms using the conditional mutual
+                information or joint mutual information
+            discrete_features: 
+                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+            discrete_target:
+                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+            n_neighbors:
+                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+            copy:
+                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+            random_state:
+                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+            n_workers: int, default=1
+                Number of workers for parallel computation on the cpu    
+
+        Returns:
+            A constrained quadratic model.
+
+        References:    
+        .. [1] Peng, F. Long, and C. Ding. Feature selection based on mutual information criteria of max-dependency,
+               max-relevance, and min-redundancy. IEEE Transactions on pattern analysis and machine intelligence,
+               27(8):1226–1238, 2005.
+        .. [2] X. V. Nguyen, J. Chan, S. Romano, and J. Bailey. Effective global approaches for mutual information 
+               based feature selection. In Proceedings of the 20th ACM SIGKDD international conference on 
+               Knowledge discovery and data mining, pages 512–521. ACM, 2014.
+        """
+        
+        cqm = dimod.ConstrainedQuadraticModel()
+        cqm.add_variables(dimod.BINARY, X.shape[1])
+
+        # add the k-hot constraint
+        cqm.add_constraint(
+            ((v, 1) for v in cqm.variables),
+            '==' if strict else '<=',
+            num_features,
+            label=f"{num_features}-hot",
+            )
+
+        mi = estimate_mi_matrix(
+            X, y, discrete_features, discrete_target,
+            n_neighbors=n_neighbors, copy=copy,
+            random_state=random_state, n_workers=n_workers,
+            conditional=conditional)
+        
+        if not conditional:
+            # mutliplying all features with num_features
+            np.multiply(mi, num_features, out=mi)
+            # mutpliypling off-diagonal ones with -(1-alpha)
+            np.multiply(mi, -(1 - alpha), out=mi)
+            # mutpliypling off-diagonal ones with alpha
+            diagonal = alpha * np.diag(mi)
+            np.fill_diagonal(mi, diagonal)
+        
+        it = np.nditer(mi, flags=['multi_index'], op_flags=[['readonly']])
+        cqm.set_objective((*it.multi_index, x) for x in it if x)
+        return cqm        
 
     def fit(
         self,
@@ -225,6 +306,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         alpha: typing.Optional[float] = None,
         num_features: typing.Optional[int] = None,
         time_limit: typing.Optional[float] = None,
+        **kwargs
     ) -> SelectFromQuadraticModel:
         """Select the features to keep.
 
@@ -253,18 +335,30 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             This instance of `SelectFromQuadraticModel`.
         """
         X = np.atleast_2d(np.asarray(X))
+        y = np.asarray(y)
+        
         if X.ndim != 2:
             raise ValueError("X must be a 2-dimensional array-like")
+        if y.ndim != 1:
+            raise ValueError("y must be a 1-dimensional array-like")
 
-        # y is checked by the correlation method function
+        if y.shape[0] != X.shape[0]:
+            raise ValueError(f"requires: X.shape[0] == y.shape[0] but {X.shape[0]} != {y.shape[0]}")
+
+        if X.shape[0] <= 1:
+            raise ValueError("X must have at least two rows") 
 
         if alpha is None:
             alpha = self.alpha
-        # alpha is checked by the correlation method function
 
         if num_features is None:
             num_features = self.num_features
-        # num_features is checked by the correlation method function
+
+        if not 0 <= alpha <= 1:
+            raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
+
+        if num_features <= 0:
+            raise ValueError(f"num_features must be a positive integer, given {num_features}")
 
         # time_limit is checked by the LeapHybridCQMSampelr
 
@@ -275,8 +369,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         if self.method == "correlation":
             cqm = self.correlation_cqm(X, y, num_features=num_features, alpha=alpha)
-        # elif self.method == "mutual information":
-        #     cqm = self.mutual_information_cqm(X, y, num_features=num_features)
+        elif self.method == "mutual_information":
+            cqm = self.mutual_information_cqm(X, y, num_features=num_features, alpha=alpha, **kwargs)
         else:
             raise ValueError(f"only methods {self.acceptable_methods} are implemented")
 

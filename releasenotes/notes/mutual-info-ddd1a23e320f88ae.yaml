@@ -1,0 +1,4 @@
+---
+features:
+  - |
+    Add feature selection method using (conditional) mutual information

@@ -47,10 +47,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from itertools import combinations
 import typing
 
+from joblib import Parallel, delayed, cpu_count
 import numpy as np
 import numpy.typing as npt
+from scipy.sparse import issparse
+from scipy.special import digamma
+from scipy.stats import entropy
+from sklearn.feature_selection._mutual_info import _compute_mi, _iterate_columns
+from sklearn.neighbors import NearestNeighbors, KDTree
+from sklearn.preprocessing import scale
+from sklearn.utils import check_random_state
+from sklearn.utils.validation import check_array, check_X_y
 
 __all__ = ["corrcoef", "cov", "dot_2d"]
 
@@ -224,3 +234,267 @@ def dot_2d(a: npt.ArrayLike, b: npt.ArrayLike, *,
             out.flush()
 
     return out
+
+    
+def estimate_mi_matrix(    
+    X: npt.ArrayLike,
+    y: npt.ArrayLike,
+    discrete_features: typing.Union[str, npt.ArrayLike]="auto",
+    discrete_target: bool = False,
+    n_neighbors: int = 4,
+    conditional: bool = True,
+    copy: bool = True,
+    random_state: typing.Union[None, int] = None,
+    n_workers: int = 1,
+    ) -> npt.ArrayLike:
+    """
+    For the feature array `X` and the target array `y` computes
+    the matrix of (conditional) mutual information interactions. 
+    
+    cmi_{i, j} = I(x_i; y)
+    
+    If `conditional = True`, then the off-diagonal terms are computed:
+    
+    cmi_{i, j} = (I(x_i; y| x_j) + I(x_j; y| x_i)) / 2
+    
+    Otherwise
+    
+    cmi_{i, j} = I(x_i; x_j)
+    
+    Computation of I(x; y) uses the scikit-learn implementation, i.e.,
+    :func:`sklearn.feature_selection._mutual_info._estimate_mi`. The computation 
+    of I(x; y| z) is based on
+    https://github.com/jannisteunissen/mutual_information
+
+    Args:
+        X: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        y: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        conditional: bool, default=True
+            Whether to compute the off-diagonal terms using the conditional mutual
+            information or joint mutual information
+
+        discrete_features: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        discrete_target: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        n_neighbors: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        copy: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        random_state: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+
+        n_workers: int, default=1
+            Number of workers for parallel computation on the cpu       
+        
+    Returns:
+        mi_matrix : ndarray, shape (n_features, n_features)
+        Interaction matrix between the features using (conditional) mutual information.
+        A negative value will be replaced by 0.
+
+    References:    
+    .. [1] A. Kraskov, H. Stogbauer and P. Grassberger, "Estimating mutual
+           information". Phys. Rev. E 69, 2004.
+    .. [2] B. C. Ross "Mutual Information between Discrete and Continuous
+           Data Sets". PLoS ONE 9(2), 2014.
+    .. [3] Mesner, Octavio César, and Cosma Rohilla Shalizi. "Conditional
+           mutual information estimation for mixed, discrete and continuous
+           data." IEEE Transactions on Information Theory 67.1 (2020): 464-484.
+    """
+    
+    X, y = check_X_y(X, y, accept_sparse="csc", y_numeric=not discrete_target)
+    n_samples, n_features = X.shape
+    
+    if isinstance(discrete_features, (str, bool)):
+        if isinstance(discrete_features, str):
+            if discrete_features == "auto":
+                discrete_features = issparse(X)
+            else:
+                raise ValueError("Invalid string value for discrete_features.")
+        discrete_mask = np.empty(n_features, dtype=bool)
+        discrete_mask.fill(discrete_features)
+    else:
+        discrete_features = check_array(discrete_features, ensure_2d=False)
+        if discrete_features.dtype != "bool":
+            discrete_mask = np.zeros(n_features, dtype=bool)
+            discrete_mask[discrete_features] = True
+        else:
+            discrete_mask = discrete_features
+
+    continuous_mask = ~discrete_mask
+    if np.any(continuous_mask) and issparse(X):
+        raise ValueError("Sparse matrix `X` can't have continuous features.")
+
+    rng = check_random_state(random_state)
+    if np.any(continuous_mask):
+        if copy:
+            X = X.copy()
+
+        X[:, continuous_mask] = scale(
+            X[:, continuous_mask], with_mean=False, copy=False
+        )
+
+        # Add small noise to continuous features as advised in Kraskov et. al.
+        X = X.astype(np.float64, copy=False)
+        means = np.maximum(1, np.mean(np.abs(X[:, continuous_mask]), axis=0))
+        X[:, continuous_mask] += (
+            1e-10
+            * means
+            * rng.standard_normal(size=(n_samples, np.sum(continuous_mask)))
+        )
+
+    if not discrete_target:
+        y = scale(y, with_mean=False)
+        y += (
+            1e-10
+            * np.maximum(1, np.mean(np.abs(y)))
+            * rng.standard_normal(size=n_samples)
+        )      
+    
+    n_features = X.shape[1]
+    max_n_workers = cpu_count()-1
+    if n_workers > max_n_workers:
+        n_workers = max_n_workers
+        Warning(f"Specified number of workers {n_workers} is larger than the number of cpus."
+                f"Will use only {max_n_workers}.")
+    
+    mi_matrix = np.zeros((n_features, n_features), dtype=np.float64)    
+
+    off_diagonal_vals = Parallel(n_jobs=n_workers)(
+        delayed(_compute_off_diagonal_mi)
+        (xi, xj, y, discrete_feature_i, discrete_feature_j, discrete_target, n_neighbors, conditional)
+        for (xi, discrete_feature_i), (xj, discrete_feature_j) in combinations(zip(_iterate_columns(X), discrete_mask), 2)
+        )
+    # keeping the discrete masks since the functions support it
+    diagonal_vals = Parallel(n_jobs=n_workers)(
+        delayed(_compute_mi)
+        (xi, y, discrete_feature_i, discrete_target, n_neighbors)
+        for xi, discrete_feature_i in zip(_iterate_columns(X), discrete_mask)
+        )
+    np.fill_diagonal(mi_matrix, diagonal_vals)
+    off_diagonal_val = iter(off_diagonal_vals)
+    if conditional:
+        # Although we need to compute `(I(X_j; Y| X_i) + I(X_i; Y| X_j))/2`
+        # we can avoid the computation of the second term using the formula:
+        # `I(X_j; Y| X_i) = I(X_i; Y| X_j) + I(X_j; Y) - I(X_i; Y)`
+        for (i, d_i), (j, d_j) in combinations(enumerate(diagonal_vals), 2):
+            val = next(off_diagonal_val)            
+            val += max(val + (d_j - d_i), 0)
+            mi_matrix[i, j] = mi_matrix[j, i] = val/2
+    else:
+        for i, j in combinations(range(n_features), 2):
+            mi_matrix[i, j] = mi_matrix[j, i] = next(off_diagonal_val)
+    return mi_matrix
+
+
+def _compute_off_diagonal_mi(
+    xi: npt.ArrayLike,
+    xj: npt.ArrayLike,
+    y: npt.ArrayLike,
+    discrete_feature_i: bool,
+    discrete_feature_j: bool,
+    discrete_target: bool,
+    n_neighbors: int = 4,
+    conditional: bool = True,
+    ):
+    """
+    Computing a distance `d` between features `x_i` and `x_j`.
+    If `conditional = True`, then conditional mutual infomation is used
+    `I(x_i; y | x_j)`.
+    
+    If `conditonal = False` then mutual information is used 
+    `I(x_i; x_j)`.    
+    
+    References
+    ----------
+    .. [1] A. Kraskov, H. Stogbauer and P. Grassberger, "Estimating mutual
+           information". Phys. Rev. E 69, 2004.
+    .. [2] B. C. Ross "Mutual Information between Discrete and Continuous
+           Data Sets". PLoS ONE 9(2), 2014.
+    .. [3] Mesner, Octavio César, and Cosma Rohilla Shalizi. "Conditional
+           mutual information estimation for mixed, discrete and continuous
+           data." IEEE Transactions on Information Theory 67.1 (2020): 464-484.
+    """
+    if conditional:
+        if discrete_feature_i and discrete_feature_j and discrete_target:
+            return _compute_cmi_d(xi, xj, y)
+        else:
+            # TODO: consider adding treatement of mixed discrete
+            # and continuous variables
+            return _compute_cmi_c(xi, xj, y, n_neighbors)
+    else:
+        return _compute_mi(xi, xj, discrete_feature_i, discrete_feature_j, n_neighbors)
+
+
+def _compute_cmi_d(
+    xi: npt.ArrayLike,
+    xj: npt.ArrayLike,
+    y: npt.ArrayLike):
+    """
+    Computes conditional mutual infomation `I(x_i; y | x_j)`.
+    All random variables `x_i`, `x_j` and `y` are discrete.
+    
+    Adpated from https://github.com/dwave-examples/mutual-information-feature-selection
+    """
+    
+    # Computing joint probability distribution for the features and the target
+    unique_labels = [np.hstack((np.unique(col), np.inf)) for col in (xi, xj, y)]
+    prob, _ = np.histogramdd(np.vstack((xi, xj, y)).T, bins=unique_labels)
+    
+    cmi_ij = (
+        entropy(prob.sum(axis=2).flatten()) # H(x_i, x_j)
+        +entropy(prob.sum(axis=0).flatten()) # H(x_j, y)
+        -entropy(prob.sum(axis=(0,2))) # H(x_j)
+        -entropy(prob.flatten()) # H(x_i, x_j, y)
+    )
+    return cmi_ij
+
+    
+def _compute_cmi_c(
+    xi: npt.ArrayLike,
+    xj: npt.ArrayLike,
+    y: npt.ArrayLike,
+    n_neighbors: int = 4):
+    """
+    Computes conditional mutual infomation `(I(x_i; y | x_j)`.
+    At least one random variables from `x_i`, `x_j` and `y` is continuous.
+    
+    Adapted from https://github.com/jannisteunissen/mutual_information
+    """
+    xi = xi.reshape((-1, 1))    
+    xj = xj.reshape((-1, 1))
+    y = y.reshape((-1, 1))
+    
+    # Here we rely on NearestNeighbors to select the fastest algorithm.
+    nn = NearestNeighbors(metric="chebyshev", n_neighbors=n_neighbors)
+    nn.fit(np.hstack((xi, xj, y)))
+    radius = nn.kneighbors()[0]
+    radius = np.nextafter(radius[:, -1], 0)
+       
+    # KDTree is explicitly fit to allow for the querying of number of
+    # neighbors within a specified radius
+    n_j = _num_points_within_radius(xj, radius)
+    n_ij = _num_points_within_radius(np.hstack((xi, xj)), radius)
+    n_jy = _num_points_within_radius(np.hstack((y, xj)), radius)
+
+    cmi_ij = (
+        digamma(n_neighbors)
+        +np.mean(digamma(n_j))
+        -np.mean(digamma(n_ij))        
+        -np.mean(digamma(n_jy)))
+    return max(0, cmi_ij)
+
+
+def _num_points_within_radius(x: npt.ArrayLike, radius: npt.ArrayLike):
+    """For each point, determine the number of other points within a given radius
+    Function from https://github.com/jannisteunissen/mutual_information
+    
+    :param x: ndarray, shape (n_samples, n_dim)
+    :param radius: radius, shape (n_samples,)
+    :returns: number of points within radius
+
+    """
+    kd = KDTree(x, metric="chebyshev")
+    nx = kd.query_radius(x, radius, count_only=True, return_distance=False)
+    return np.array(nx)
