@@ -51,7 +51,11 @@ import unittest
 
 import numpy as np
 
-from dwave.plugins.sklearn.utilities import corrcoef, cov, dot_2d, _compute_cmi_c, _compute_cmi_d
+from dwave.plugins.sklearn.utilities import (
+    corrcoef, cov, dot_2d, 
+    _compute_cmip_c, _compute_cmip_d, 
+    _compute_cmip_cdc, _compute_cmip_ccd
+)
 from scipy.special import digamma
 from sklearn.feature_selection._mutual_info import _compute_mi
 from sklearn.neighbors import KDTree
@@ -183,28 +187,60 @@ class TestDot2D(unittest.TestCase):
 
 
 class TestMI(unittest.TestCase):
+    def test_cmi_cdc(self):
+        np.random.seed(42)        
+        n_samples, n_neighbors = 4003, 4
+        c1 = np.random.randn(n_samples,)
+        n_ss = 1001
+        d1 = np.hstack((
+            np.random.randint(-2, 1, (n_ss, )),
+            np.random.randint(10, 14, (n_samples-n_ss, ))))
+        d2 = np.random.randint(0, 4, (n_samples, ))
+        np.random.shuffle(d2)
+        cmi_ij_pair = _compute_cmip_c(c1, d1, d2, n_neighbors=n_neighbors)
+        cmi_ij_pair_cdc = _compute_cmip_cdc(c1, d1, d2, n_neighbors=n_neighbors)
+        cmi_ij_pair_ccd = _compute_cmip_ccd(c1, d1, d2, n_neighbors=n_neighbors)
+        self.assertAlmostEqual(
+            sum(cmi_ij_pair), sum(cmi_ij_pair_cdc), places=4,
+            msg="Computation for mixed continuous/discrete conditional mutual information is not accurate")
+        self.assertAlmostEqual(
+            sum(cmi_ij_pair), sum(cmi_ij_pair_ccd), places=4,
+            msg="Computation for mixed continuous/discrete conditional mutual information is not accurate")
+
+    def test_cmi_symmetry(self):
+        np.random.seed(42)        
+        n_samples, n_neighbors = 4003, 4
+        # Test continuous implementation
+        Xy = np.random.randn(n_samples, 3)
+        cmi_ij_pair = _compute_cmip_c(Xy[:, 0], Xy[:, 1], Xy[:, 2], n_neighbors=n_neighbors)
+        cmi_ji_pair = _compute_cmip_c(Xy[:, 1], Xy[:, 0], Xy[:, 2], n_neighbors=n_neighbors)
+        self.assertAlmostEqual(
+            sum(cmi_ij_pair), sum(cmi_ji_pair), places=3,
+            msg="Computation for continuous conditional mutual information is not symmetric")
+
+        c1 = np.random.randn(n_samples,)
+        c2 = np.random.randn(n_samples,)
+        n_ss = 1001
+        d = np.hstack((
+            np.random.randint(-2, 1, (n_ss, )),
+            np.random.randint(10, 14, (n_samples-n_ss, ))))
+        np.random.shuffle(d)
+        cmi_ij_pair = _compute_cmip_ccd(c1, c2, d, n_neighbors=n_neighbors)
+        cmi_ji_pair = _compute_cmip_ccd(c2, c1, d, n_neighbors=n_neighbors)
+        self.assertAlmostEqual(
+            sum(cmi_ij_pair), sum(cmi_ji_pair), places=3,
+            msg="Computation for mixed continuous/discrete conditional mutual information is not symmetric")        
+
     def test_cmi(self):
         """
         We test the algorithm using the formula `I(x;y|z) = I(x;y) + I(z;y) - I(z;y|x)`.
         Since the mutual information data is an sklearn function,
         :func:`sklearn.feature_selection._mutual_info._compute_mi`
         it is highly likely that formula is valid only if our algorithm is correct.
-        For continous variables the formula may still break for some seeds
         """
         np.random.seed(42)
-        n_samples, n_neighbors = 4003, 4
-        # Test continuous implementation
-        Xy = np.random.randn(n_samples, 3)
-        cmi_ij = _compute_cmi_c(Xy[:, 0], Xy[:, 1], Xy[:, 2], n_neighbors=n_neighbors)
-        cmi_ji = _compute_cmi_c(Xy[:, 1], Xy[:, 0], Xy[:, 2], n_neighbors=n_neighbors)
-        mi_i = _compute_mi(Xy[:, 0], Xy[:, 2], False, False, n_neighbors=n_neighbors)
-        mi_j = _compute_mi(Xy[:, 1], Xy[:, 2], False, False, n_neighbors=n_neighbors)
-        self.assertAlmostEqual(
-            max(cmi_ij + mi_j - mi_i, 0), cmi_ji, places=3,
-            msg="The formula for continuous conditional mutual information is violated")
-
         # Test discrete implementation       
-        n_samples, n_ss = 103, 51
+        n_samples, n_ss, n_neighbors = 103, 51, 4
         xi = np.random.randint(0, 11, (n_samples, ))
         xj = np.hstack((
             np.random.randint(-2, 1, (n_ss, )),
@@ -212,13 +248,16 @@ class TestMI(unittest.TestCase):
         np.random.shuffle(xi)
         np.random.shuffle(xj)
         y = np.random.randint(-12, -10, (n_samples, ))
-        cmi_ij = _compute_cmi_d(xi, xj, y)
-        cmi_ji = _compute_cmi_d(xj, xi, y)
+        cmi_ij, cmi_ji = _compute_cmip_d(xi, xj, y)
         mi_i = _compute_mi(xi, y, True, True, n_neighbors=n_neighbors)
         mi_j = _compute_mi(xj, y, True, True, n_neighbors=n_neighbors)
         self.assertAlmostEqual(
             cmi_ij + mi_j - mi_i, cmi_ji, places=5,
             msg="The formula for discrete conditional mutual information is violated")
+        cmi_ij2 = _compute_cmip_d(xj, xi, y)
+        self.assertAlmostEqual(
+            sum(cmi_ij2), cmi_ji+cmi_ij, places=5,
+            msg="Discrete conditional mutual information computation is not symmetric")
 
     def test_implementation(self):
         # methods from https://github.com/jannisteunissen/mutual_information
@@ -231,7 +270,14 @@ class TestMI(unittest.TestCase):
             xyz = np.hstack((x, y, z))
             k = np.full(n_samples, n_neighbors)
             radius = get_radius_kneighbors(xyz, n_neighbors)
-
+            
+            mask = (radius == 0)
+            if mask.sum() > 0:
+                vals, ix, counts = np.unique(xyz[mask], axis=0,
+                                        return_inverse=True,
+                                        return_counts=True)
+                k[mask] = counts[ix] - 1
+            
             nxz = num_points_within_radius(np.hstack((x, z)), radius)
             nyz = num_points_within_radius(np.hstack((y, z)), radius)
             nz = num_points_within_radius(z, radius)
@@ -267,14 +313,20 @@ class TestMI(unittest.TestCase):
             kd = KDTree(x, metric="chebyshev")
             nx = kd.query_radius(x, radius, count_only=True, return_distance=False)
             return np.array(nx) - 1.0
-
+        
+        np.random.seed(42)
         n_samples, n_neighbors = 103, 4
         # Test continuous implementation
         Xy = np.random.randn(n_samples, 3)
-        cmi_t = _compute_cmi_t(Xy[:,0], Xy[:,1], Xy[:,2], n_neighbors=n_neighbors)
+        cmi_t_01 = _compute_cmi_t(Xy[:,0], Xy[:,1], Xy[:,2], n_neighbors=n_neighbors)
+        cmi_t_10 = _compute_cmi_t(Xy[:,1], Xy[:,0], Xy[:,2], n_neighbors=n_neighbors)
 
-        cmi_c = _compute_cmi_c(Xy[:,0], Xy[:,1], Xy[:,2], n_neighbors=n_neighbors)
+        cmi_ij, cmi_ji = _compute_cmip_c(Xy[:,0], Xy[:,1], Xy[:,2], n_neighbors=n_neighbors)
 
         self.assertAlmostEqual(
-            cmi_t, cmi_c, places=5,
+            max(cmi_t_01, 0), cmi_ij, places=5,
+            msg="The algorithm doesn't match the original implementation")
+
+        self.assertAlmostEqual(
+            max(cmi_t_10, 0), cmi_ji, places=5,
             msg="The algorithm doesn't match the original implementation")

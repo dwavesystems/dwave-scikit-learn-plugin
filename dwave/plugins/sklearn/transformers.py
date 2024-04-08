@@ -14,23 +14,25 @@
 
 from __future__ import annotations
 
-import itertools
-import logging
+from itertools import combinations
 import tempfile
 import typing
-import warnings
 
 import dimod
-import numpy as np
-import numpy.typing as npt
-
+from dwave.plugins.sklearn.utilities import corrcoef, _compute_off_diagonal_mi, tqdm_joblib
 from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
 from dwave.system import LeapHybridCQMSampler
+from joblib import Parallel, delayed, cpu_count
+import numpy as np
+import numpy.typing as npt
+from scipy.sparse import issparse
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectorMixin
-from sklearn.utils.validation import check_is_fitted
-
-from dwave.plugins.sklearn.utilities import corrcoef, estimate_mi_matrix
+from sklearn.feature_selection._mutual_info import _compute_mi, _iterate_columns
+from sklearn.preprocessing import scale
+from sklearn.utils import check_random_state
+from sklearn.utils.validation import check_is_fitted, check_array, check_X_y
+from tqdm import tqdm
 
 __all__ = ["SelectFromQuadraticModel"]
 
@@ -110,8 +112,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         except AttributeError:
             raise RuntimeError("fit hasn't been run yet")
 
-    @staticmethod
     def correlation_cqm(
+        self,
         X: npt.ArrayLike,
         y: npt.ArrayLike,
         *,
@@ -152,6 +154,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             1QBit; White Paper.
             https://1qbit.com/whitepaper/optimal-feature-selection-in-credit-scoring-classification-using-quantum-annealer
         """
+        self._check_params(X, y, alpha, num_features)
 
         cqm = dimod.ConstrainedQuadraticModel()
         cqm.add_variables(dimod.BINARY, X.shape[1])
@@ -191,13 +194,12 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             np.fill_diagonal(correlations, correlations[:, -1] * (- alpha * num_features))
             # Note: we only add terms on and above the diagonal
             it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
-            print(correlations)
             cqm.set_objective((*it.multi_index, x) for x in it if x)
 
         return cqm
 
-    @staticmethod
-    def mutual_information_cqm(        
+    def mutual_information_cqm(
+        self,   
         X: npt.ArrayLike,
         y: npt.ArrayLike,
         *,
@@ -268,6 +270,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                Knowledge discovery and data mining, pages 512–521. ACM, 2014.
         """
         
+        self._check_params(X, y, alpha, num_features)
+        
         cqm = dimod.ConstrainedQuadraticModel()
         cqm.add_variables(dimod.BINARY, X.shape[1])
 
@@ -335,30 +339,18 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             This instance of `SelectFromQuadraticModel`.
         """
         X = np.atleast_2d(np.asarray(X))
-        y = np.asarray(y)
-        
         if X.ndim != 2:
             raise ValueError("X must be a 2-dimensional array-like")
-        if y.ndim != 1:
-            raise ValueError("y must be a 1-dimensional array-like")
 
-        if y.shape[0] != X.shape[0]:
-            raise ValueError(f"requires: X.shape[0] == y.shape[0] but {X.shape[0]} != {y.shape[0]}")
-
-        if X.shape[0] <= 1:
-            raise ValueError("X must have at least two rows") 
+        # y is checked by the correlation method function
 
         if alpha is None:
             alpha = self.alpha
+        # alpha is checked by the correlation method function
 
         if num_features is None:
             num_features = self.num_features
-
-        if not 0 <= alpha <= 1:
-            raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
-
-        if num_features <= 0:
-            raise ValueError(f"num_features must be a positive integer, given {num_features}")
+        # num_features is checked by the correlation method function
 
         # time_limit is checked by the LeapHybridCQMSampelr
 
@@ -403,3 +395,173 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
     def unfit(self):
         """Undo a previously executed ``fit`` method."""
         del self._mask
+
+    @staticmethod
+    def _check_params(X: npt.ArrayLike,
+                      y: npt.ArrayLike,
+                      alpha: float,
+                      num_features: int):
+        X = np.atleast_2d(np.asarray(X))
+        y = np.asarray(y)
+        
+        if X.ndim != 2:
+            raise ValueError("X must be a 2-dimensional array-like")
+
+        if y.ndim != 1:
+            raise ValueError("y must be a 1-dimensional array-like")
+
+        if y.shape[0] != X.shape[0]:
+            raise ValueError(f"requires: X.shape[0] == y.shape[0] but {X.shape[0]} != {y.shape[0]}")
+
+        if not 0 <= alpha <= 1:
+            raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
+
+        if num_features <= 0:
+            raise ValueError(f"num_features must be a positive integer, given {num_features}")
+
+        if X.shape[0] <= 1:
+            raise ValueError("X must have at least two rows")
+
+
+def estimate_mi_matrix(    
+    X: npt.ArrayLike,
+    y: npt.ArrayLike,
+    discrete_features: typing.Union[str, npt.ArrayLike]="auto",
+    discrete_target: bool = False,
+    n_neighbors: int = 4,
+    conditional: bool = True,
+    copy: bool = True,
+    random_state: typing.Union[None, int] = None,
+    n_workers: int = 1,
+    n_subsample: int = -1
+    ) -> npt.ArrayLike:
+    """
+    For the feature array `X` and the target array `y` computes
+    the matrix of (conditional) mutual information interactions. 
+    
+    cmi_{i, j} = I(x_i; y)
+    
+    If `conditional = True`, then the off-diagonal terms are computed:
+    
+    cmi_{i, j} = (I(x_i; y| x_j) + I(x_j; y| x_i)) / 2
+    
+    Otherwise
+    
+    cmi_{i, j} = I(x_i; x_j)
+    
+    Computation of I(x; y) uses the scikit-learn implementation, i.e.,
+    :func:`sklearn.feature_selection._mutual_info._estimate_mi`. The computation 
+    of I(x; y| z) is based on
+    https://github.com/jannisteunissen/mutual_information
+
+    Args:
+        X: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        y: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        conditional: bool, default=True
+            Whether to compute the off-diagonal terms using the conditional mutual
+            information or joint mutual information
+
+        discrete_features: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        discrete_target: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        n_neighbors: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        copy: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        
+        random_state: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+
+        n_workers: int, default=1
+            Number of workers for parallel computation on the cpu       
+        
+    Returns:
+        mi_matrix : ndarray, shape (n_features, n_features)
+        Interaction matrix between the features using (conditional) mutual information.
+        A negative value will be replaced by 0.
+
+    References:    
+    .. [1] A. Kraskov, H. Stogbauer and P. Grassberger, "Estimating mutual
+           information". Phys. Rev. E 69, 2004.
+    .. [2] B. C. Ross "Mutual Information between Discrete and Continuous
+           Data Sets". PLoS ONE 9(2), 2014.
+    .. [3] Mesner, Octavio César, and Cosma Rohilla Shalizi. "Conditional
+           mutual information estimation for mixed, discrete and continuous
+           data." IEEE Transactions on Information Theory 67.1 (2020): 464-484.
+    """
+    
+    X, y = check_X_y(X, y, accept_sparse="csc", y_numeric=not discrete_target)
+    n_samples, n_features = X.shape
+    
+    if isinstance(discrete_features, (str, bool)):
+        if isinstance(discrete_features, str):
+            if discrete_features == "auto":
+                discrete_features = issparse(X)
+            else:
+                raise ValueError("Invalid string value for discrete_features.")
+        discrete_mask = np.empty(n_features, dtype=bool)
+        discrete_mask.fill(discrete_features)
+    else:
+        discrete_features = check_array(discrete_features, ensure_2d=False)
+        if discrete_features.dtype != "bool":
+            discrete_mask = np.zeros(n_features, dtype=bool)
+            discrete_mask[discrete_features] = True
+        else:
+            discrete_mask = discrete_features
+
+    continuous_mask = ~discrete_mask
+    if np.any(continuous_mask) and issparse(X):
+        raise ValueError("Sparse matrix `X` can't have continuous features.")
+
+    rng = check_random_state(random_state)
+    if np.any(continuous_mask):
+        if copy:
+            X = X.copy()
+
+        X[:, continuous_mask] = scale(
+            X[:, continuous_mask], with_mean=False, copy=False
+        )
+
+        # Add small noise to continuous features as advised in Kraskov et. al.
+        X = X.astype(np.float64, copy=False)
+        means = np.maximum(1, np.mean(np.abs(X[:, continuous_mask]), axis=0))
+        X[:, continuous_mask] += (
+            1e-10
+            * means
+            * rng.standard_normal(size=(n_samples, np.sum(continuous_mask)))
+        )
+
+    if not discrete_target:
+        y = scale(y, with_mean=False)
+        y += (
+            1e-10
+            * np.maximum(1, np.mean(np.abs(y)))
+            * rng.standard_normal(size=n_samples)
+        )      
+    
+    n_features = X.shape[1]
+    max_n_workers = cpu_count()-1
+    if n_workers > max_n_workers:
+        n_workers = max_n_workers
+        Warning(f"Specified number of workers {n_workers} is larger than the number of cpus."
+                f"Will use only {max_n_workers}.")
+    
+    mi_matrix = np.zeros((n_features, n_features), dtype=np.float64)    
+    with tqdm_joblib(tqdm(desc="Computing off-diagonal terms", total=len(discrete_mask) * (len(discrete_mask) - 1) // 2 )) as progress_bar:
+        off_diagonal_vals = Parallel(n_jobs=n_workers)(
+            delayed(_compute_off_diagonal_mi)
+            (xi, xj, y, discrete_feature_i, discrete_feature_j, discrete_target, n_neighbors, conditional, n_subsample)
+            for (xi, discrete_feature_i), (xj, discrete_feature_j) in combinations(zip(_iterate_columns(X), discrete_mask), 2)
+            )
+    diagonal_vals = Parallel(n_jobs=n_workers)(
+        delayed(_compute_mi)
+        (xi, y, discrete_feature_i, discrete_target, n_neighbors)
+        for xi, discrete_feature_i in zip(_iterate_columns(X), discrete_mask)
+        )
+    np.fill_diagonal(mi_matrix, diagonal_vals)
+    off_diagonal_val = iter(off_diagonal_vals)
+    for i, j in combinations(range(n_features), 2):
+        mi_matrix[i, j] = mi_matrix[j, i] = next(off_diagonal_val)
+    return mi_matrix
+
