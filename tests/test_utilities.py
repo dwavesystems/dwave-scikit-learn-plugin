@@ -47,18 +47,29 @@
 
 import os.path
 import tempfile
+import typing
 import unittest
 
 import numpy as np
+import numpy.typing as npt
 
 from dwave.plugins.sklearn.utilities import (
-    corrcoef, cov, dot_2d, 
-    _compute_cmip_c, _compute_cmip_d, 
+    corrcoef, cov, dot_2d,
+    _compute_off_diagonal_cmi,
+    _compute_off_diagonal_mi,
+    _compute_cmip_c, _compute_cmip_d,
     _compute_cmip_cdc, _compute_cmip_ccd
 )
+from dwave.plugins.sklearn.transformers import estimate_mi_matrix
+from scipy.linalg import norm
+from scipy.sparse import issparse
 from scipy.special import digamma
 from sklearn.feature_selection._mutual_info import _compute_mi
+from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from sklearn.neighbors import KDTree
+from sklearn.preprocessing import scale
+from sklearn.utils import check_random_state
+from sklearn.utils.validation import check_array, check_X_y
 
 class TestCorrCoef(unittest.TestCase):
     def test_agreement(self):
@@ -235,7 +246,7 @@ class TestMI(unittest.TestCase):
         """
         We test the algorithm using the formula `I(x;y|z) = I(x;y) + I(z;y) - I(z;y|x)`.
         Since the mutual information data is an sklearn function,
-        :func:`sklearn.feature_selection._mutual_info._compute_mi`
+        :func:`sklearn.feature_selection._mutual_info.mutual_info_classif`
         it is highly likely that formula is valid only if our algorithm is correct.
         """
         np.random.seed(42)
@@ -249,16 +260,73 @@ class TestMI(unittest.TestCase):
         np.random.shuffle(xj)
         y = np.random.randint(-12, -10, (n_samples, ))
         cmi_ij, cmi_ji = _compute_cmip_d(xi, xj, y)
-        mi_i = _compute_mi(xi, y, True, True, n_neighbors=n_neighbors)
-        mi_j = _compute_mi(xj, y, True, True, n_neighbors=n_neighbors)
-        self.assertAlmostEqual(
-            cmi_ij + mi_j - mi_i, cmi_ji, places=5,
-            msg="The formula for discrete conditional mutual information is violated")
+        mi_i = mutual_info_classif(
+            xi.reshape(-1, 1), y, discrete_features=True, n_neighbors=n_neighbors)
+        mi_j = mutual_info_classif(
+            xj.reshape(-1, 1), y, discrete_features=True, n_neighbors=n_neighbors)
+        self.assertTrue(
+            np.allclose(cmi_ij + mi_j - mi_i, cmi_ji, atol=1e-5),
+            msg="The chain rule for discrete conditional mutual information is violated")
         cmi_ij2 = _compute_cmip_d(xj, xi, y)
-        self.assertAlmostEqual(
-            sum(cmi_ij2), cmi_ji+cmi_ij, places=5,
+        self.assertTrue(
+            np.allclose(sum(cmi_ij2), cmi_ji+cmi_ij, atol=1e-5),
             msg="Discrete conditional mutual information computation is not symmetric")
 
+    def test_mi(self):
+        np.random.seed(42)
+        # Test discrete implementation       
+        n_samples, n_ss, n_neighbors = 103, 51, 4
+        xi = np.random.randint(0, 11, (n_samples, ))
+        xj = np.hstack((
+            np.random.randint(-2, 1, (n_ss, )),
+            np.random.randint(10, 14, (n_samples-n_ss, ))))
+        np.random.shuffle(xi)
+        np.random.shuffle(xj)
+        mi_ij = _compute_off_diagonal_mi(
+            xi.reshape(-1, 1), xj, True, True, n_neighbors=n_neighbors)
+        mi_ji = _compute_off_diagonal_mi(
+            xi.reshape(-1, 1), xj, True, True, n_neighbors=n_neighbors)
+        mi_ij_cl = mutual_info_classif(xi.reshape(-1, 1), xj, discrete_features=True)
+        self.assertTrue(
+            np.allclose(mi_ij_cl, mi_ij),
+            msg="Discrete mutual information is not computed correctly")
+        self.assertTrue(
+            np.allclose(mi_ij_cl, mi_ji),
+            msg="Discrete mutual information is not computed correctly")
+
+        mi_ij = _compute_off_diagonal_mi(
+            xi, xj, False, True, n_neighbors=n_neighbors)
+        mi_ji = _compute_off_diagonal_mi(
+            xi, xj, False, True, n_neighbors=n_neighbors)
+        mi_ij_cl = mutual_info_classif(
+            xi.reshape(-1, 1), xj, discrete_features=False)
+        self.assertTrue(
+            np.allclose(mi_ij_cl, mi_ij),
+            msg="Mixed mutual information is not computed correctly")
+        self.assertTrue(
+            np.allclose(mi_ij_cl, mi_ji),
+            msg="Mixed mutual information is not computed correctly")
+
+        xj = np.random.randn(n_samples)
+        mi_ij = _compute_off_diagonal_mi(
+            xi, xj, True, False, n_neighbors=n_neighbors)
+        mi_ij_cl = mutual_info_regression(
+            xi.reshape(-1, 1), xj,
+            discrete_features=True, n_neighbors=n_neighbors)
+        self.assertTrue(
+            np.allclose(mi_ij_cl, mi_ij, atol=1e-5),
+            msg="Continuous mutual information is not computed correctly")
+
+        xi = np.random.randn(n_samples)
+        mi_ij = _compute_off_diagonal_mi(
+            xi, xj, False, False, n_neighbors=n_neighbors)
+        mi_ij_cl = mutual_info_regression(
+            xi.reshape(-1, 1), xj,
+            discrete_features=False, n_neighbors=n_neighbors)
+        self.assertTrue(
+            np.allclose(mi_ij_cl, mi_ij, atol=1e-3),
+            msg="Continuous mutual information is not computed correctly")
+        
     def test_implementation(self):
         # methods from https://github.com/jannisteunissen/mutual_information
         def _compute_cmi_t(x, z, y, n_neighbors):

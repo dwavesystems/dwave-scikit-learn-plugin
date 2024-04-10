@@ -14,25 +14,29 @@
 
 from __future__ import annotations
 
+from inspect import signature
 from itertools import combinations
 import tempfile
 import typing
 
 import dimod
-from dwave.plugins.sklearn.utilities import corrcoef, _compute_off_diagonal_mi, tqdm_joblib
 from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
+from dwave.plugins.sklearn.utilities import (
+    corrcoef,
+    _compute_off_diagonal_cmi,
+    _compute_off_diagonal_mi,
+    _iterate_columns)
 from dwave.system import LeapHybridCQMSampler
-from joblib import Parallel, delayed, cpu_count
 import numpy as np
 import numpy.typing as npt
 from scipy.sparse import issparse
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectorMixin
-from sklearn.feature_selection._mutual_info import _compute_mi, _iterate_columns
+from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from sklearn.preprocessing import scale
 from sklearn.utils import check_random_state
+from sklearn.utils.parallel import Parallel, delayed
 from sklearn.utils.validation import check_is_fitted, check_array, check_X_y
-from tqdm import tqdm
 
 __all__ = ["SelectFromQuadraticModel"]
 
@@ -211,7 +215,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         discrete_target: bool = False,
         copy: bool = True,
         n_neighbors: int = 4,
-        n_workers: int = 1,
+        n_jobs: typing.Union[None, int] = None,
         random_state: typing.Union[None, int] = None,
         ) -> dimod.ConstrainedQuadraticModel:
         """Build a constrained quadratic model for feature selection.
@@ -255,8 +259,12 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
             random_state:
                 See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
-            n_workers: int, default=1
-                Number of workers for parallel computation on the cpu    
+            n_jobs: int, default=None
+                The number of parallel jobs to run for the conditional mutual information
+                computation. The parallelization is over the columns of `X`.
+                ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
+                ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
+                for more details.
 
         Returns:
             A constrained quadratic model.
@@ -284,19 +292,23 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             )
 
         mi = estimate_mi_matrix(
-            X, y, discrete_features, discrete_target,
+            X, y, 
+            discrete_features=discrete_features, 
+            discrete_target=discrete_target,
             n_neighbors=n_neighbors, copy=copy,
-            random_state=random_state, n_workers=n_workers,
+            random_state=random_state, n_jobs=n_jobs,
             conditional=conditional)
         
-        if not conditional:
-            # mutliplying all features with num_features
-            np.multiply(mi, num_features, out=mi)
-            # mutpliypling off-diagonal ones with -(1-alpha)
-            np.multiply(mi, -(1 - alpha), out=mi)
+        if conditional:            
+            np.multiply(mi, -1, out=mi)
+        else:
+            # mutpliypling off-diagonal ones with -1
+            diagonal = -np.diag(mi).copy()
             # mutpliypling off-diagonal ones with alpha
-            diagonal = alpha * np.diag(mi)
+            np.multiply(mi, alpha, out=mi)            
             np.fill_diagonal(mi, diagonal)
+        
+        self.mi_matrix = mi
         
         it = np.nditer(mi, flags=['multi_index'], op_flags=[['readonly']])
         cqm.set_objective((*it.multi_index, x) for x in it if x)
@@ -362,7 +374,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         if self.method == "correlation":
             cqm = self.correlation_cqm(X, y, num_features=num_features, alpha=alpha)
         elif self.method == "mutual_information":
-            cqm = self.mutual_information_cqm(X, y, num_features=num_features, alpha=alpha, **kwargs)
+            cqm = self.mutual_information_cqm(
+                X, y, num_features=num_features, alpha=alpha, **kwargs)
         else:
             raise ValueError(f"only methods {self.acceptable_methods} are implemented")
 
@@ -432,8 +445,7 @@ def estimate_mi_matrix(
     conditional: bool = True,
     copy: bool = True,
     random_state: typing.Union[None, int] = None,
-    n_workers: int = 1,
-    n_subsample: int = -1
+    n_jobs: typing.Union[None, int] = None,
     ) -> npt.ArrayLike:
     """
     For the feature array `X` and the target array `y` computes
@@ -473,8 +485,12 @@ def estimate_mi_matrix(
         
         random_state: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
 
-        n_workers: int, default=1
-            Number of workers for parallel computation on the cpu       
+        n_jobs: int, default=None
+            The number of parallel jobs to run for the conditional mutual information
+            computation. The parallelization is over the columns of `X`.
+            ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
+            ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
+            for more details.
         
     Returns:
         mi_matrix : ndarray, shape (n_features, n_features)
@@ -490,7 +506,6 @@ def estimate_mi_matrix(
            mutual information estimation for mixed, discrete and continuous
            data." IEEE Transactions on Information Theory 67.1 (2020): 464-484.
     """
-    
     X, y = check_X_y(X, y, accept_sparse="csc", y_numeric=not discrete_target)
     n_samples, n_features = X.shape
     
@@ -504,64 +519,56 @@ def estimate_mi_matrix(
         discrete_mask.fill(discrete_features)
     else:
         discrete_features = check_array(discrete_features, ensure_2d=False)
-        if discrete_features.dtype != "bool":
+        if np.issubdtype(discrete_features.dtype, bool):
             discrete_mask = np.zeros(n_features, dtype=bool)
             discrete_mask[discrete_features] = True
         else:
             discrete_mask = discrete_features
 
-    continuous_mask = ~discrete_mask
-    if np.any(continuous_mask) and issparse(X):
-        raise ValueError("Sparse matrix `X` can't have continuous features.")
-
-    rng = check_random_state(random_state)
-    if np.any(continuous_mask):
-        if copy:
-            X = X.copy()
-
-        X[:, continuous_mask] = scale(
-            X[:, continuous_mask], with_mean=False, copy=False
-        )
-
-        # Add small noise to continuous features as advised in Kraskov et. al.
-        X = X.astype(np.float64, copy=False)
-        means = np.maximum(1, np.mean(np.abs(X[:, continuous_mask]), axis=0))
-        X[:, continuous_mask] += (
-            1e-10
-            * means
-            * rng.standard_normal(size=(n_samples, np.sum(continuous_mask)))
-        )
-
-    if not discrete_target:
+    # copying X if needed
+    if copy:
+        X = X.copy()
+  
+    # Computing the diagonal terms
+    mutual_info_args = dict(X=X, y=y,
+                              discrete_features=discrete_mask,
+                              n_neighbors=n_neighbors,
+                              copy=False, random_state=random_state)
+    # In earlier versions of sklearn functions `mutual_info_classif` and 
+    # `mutual_info_regression` do not allow for parallel computations and
+    # do not have `n_jobs` argument.
+    if "n_jobs" in signature(mutual_info_classif).parameters and \
+    "n_jobs" in signature(mutual_info_regression).parameters:
+        mutual_info_args["n_jobs"] = n_jobs
+    if discrete_target:
+        diagonal_vals = mutual_info_classif(**mutual_info_args)
+    else:
+        diagonal_vals = mutual_info_regression(**mutual_info_args)
+        # the target y is not modified even if copy=False
+        # https://github.com/scikit-learn/scikit-learn/issues/28793
+        rng = check_random_state(random_state)        
         y = scale(y, with_mean=False)
         y += (
             1e-10
             * np.maximum(1, np.mean(np.abs(y)))
             * rng.standard_normal(size=n_samples)
-        )      
-    
-    n_features = X.shape[1]
-    max_n_workers = cpu_count()-1
-    if n_workers > max_n_workers:
-        n_workers = max_n_workers
-        Warning(f"Specified number of workers {n_workers} is larger than the number of cpus."
-                f"Will use only {max_n_workers}.")
-    
-    mi_matrix = np.zeros((n_features, n_features), dtype=np.float64)    
-    with tqdm_joblib(tqdm(desc="Computing off-diagonal terms", total=len(discrete_mask) * (len(discrete_mask) - 1) // 2 )) as progress_bar:
-        off_diagonal_vals = Parallel(n_jobs=n_workers)(
-            delayed(_compute_off_diagonal_mi)
-            (xi, xj, y, discrete_feature_i, discrete_feature_j, discrete_target, n_neighbors, conditional, n_subsample)
-            for (xi, discrete_feature_i), (xj, discrete_feature_j) in combinations(zip(_iterate_columns(X), discrete_mask), 2)
-            )
-    diagonal_vals = Parallel(n_jobs=n_workers)(
-        delayed(_compute_mi)
-        (xi, y, discrete_feature_i, discrete_target, n_neighbors)
-        for xi, discrete_feature_i in zip(_iterate_columns(X), discrete_mask)
         )
+
+    mi_matrix = np.zeros((n_features, n_features), dtype=np.float64)
     np.fill_diagonal(mi_matrix, diagonal_vals)
+    off_diagonal_iter = combinations(zip(_iterate_columns(X), discrete_mask), 2)
+    if conditional:
+        off_diagonal_vals = Parallel(n_jobs=n_jobs, verbose=1)(
+            delayed(_compute_off_diagonal_cmi)
+            (xi, xj, y, discrete_feature_i, discrete_feature_j, discrete_target, n_neighbors)
+            for (xi, discrete_feature_i), (xj, discrete_feature_j) in off_diagonal_iter)
+    else:
+        off_diagonal_vals = Parallel(n_jobs=n_jobs, verbose=1)(
+            delayed(_compute_off_diagonal_mi)
+            (xi, xj, discrete_feature_i, discrete_feature_j, n_neighbors)
+            for (xi, discrete_feature_i), (xj, discrete_feature_j) in off_diagonal_iter)
+            
     off_diagonal_val = iter(off_diagonal_vals)
     for i, j in combinations(range(n_features), 2):
         mi_matrix[i, j] = mi_matrix[j, i] = next(off_diagonal_val)
     return mi_matrix
-
