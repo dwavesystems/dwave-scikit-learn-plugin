@@ -2,3 +2,8 @@
 features:
   - |
     Add feature selection method using (conditional) mutual information
+deprecations:
+  - |
+    Drop support for Python 3.7.
+  - |
+    Drop support for scikit-learn 1.2.0

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from inspect import signature
 from itertools import combinations
 import tempfile
 import typing
@@ -23,8 +22,8 @@ import dimod
 from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
 from dwave.plugins.sklearn.utilities import (
     corrcoef,
-    _compute_off_diagonal_cmi,
-    _compute_off_diagonal_mi,
+    _compute_cmi_distance,
+    _compute_mi,
     _iterate_columns)
 from dwave.system import LeapHybridCQMSampler
 import numpy as np
@@ -56,21 +55,36 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             :class:`sklearn.feature_selection.SelectKBest`.
         num_features:
             The number of features to select.
+        method:
+            If equal to ``correlation`` uses a correlation as a criterion for
+            choosing the features according to [1]_. If equal to ``mutual_information``
+            uses mutual information criteria [2]_ or [3]_ (advances feature).
         time_limit:
             The time limit for the run on the hybrid solver.
 
+    .. [1] [Milne et al.] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
+            Selection in Credit Scoring and Classification Using a Quantum Annealer."
+            1QBit; White Paper.
+            https://1qbit.com/whitepaper/optimal-feature-selection-in-credit-scoring-classification-using-quantum-annealer
+    .. [2] Peng, F. Long, and C. Ding. Feature selection based on mutual information criteria
+            of max-dependency, max-relevance, and min-redundancy. IEEE Transactions on pattern
+            analysis and machine intelligence, 27(8):1226–1238, 2005.
+    .. [3] X. V. Nguyen, J. Chan, S. Romano, and J. Bailey. Effective global approaches for
+            mutual information based feature selection. In Proceedings of the 20th ACM SIGKDD
+            international conference on Knowledge discovery and data mining,
+            pages 512–521. ACM, 2014.
     """
 
     ACCEPTED_METHODS = [
         "correlation",
         "mutual_information",
-        ]
+    ]
 
     def __init__(
         self,
         *,
         alpha: float = .5,
-        method: str = "correlation",  # undocumented until there is another supported
+        method: str = "correlation",
         num_features: int = 10,
         time_limit: typing.Optional[float] = None,
     ):
@@ -128,7 +142,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         """Build a constrained quadratic model for feature selection.
 
         This method is based on maximizing influence and independence as
-        measured by correlation [Milne et al.]_.
+        measured by correlation [1]_.
 
         Args:
             X:
@@ -153,7 +167,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         Returns:
             A constrained quadratic model.
 
-        .. [Milne et al.] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
+        .. [1] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
             Selection in Credit Scoring and Classification Using a Quantum Annealer."
             1QBit; White Paper.
             https://1qbit.com/whitepaper/optimal-feature-selection-in-credit-scoring-classification-using-quantum-annealer
@@ -169,7 +183,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             '==' if strict else '<=',
             num_features,
             label=f"{num_features}-hot",
-            )
+        )
 
         with tempfile.TemporaryFile() as fX, tempfile.TemporaryFile() as fout:
             # we make a copy of X because we'll be modifying it in-place within
@@ -184,7 +198,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 dtype=np.result_type(X, y),
                 mode="w+",
                 shape=(X_copy.shape[1], X_copy.shape[1]),
-                )            
+            )
             # main calculation. It modifies X_copy in-place
             corrcoef(X_copy, out=correlations, rowvar=False, copy=False)
             # we don't care about the direction of correlation in terms of
@@ -193,7 +207,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             # multiplying all but last columns and rows with (1 - alpha)
             np.multiply(correlations[:-1, :-1], (1 - alpha), out=correlations[:-1, :-1])
             # our objective
-            # we multiply by num_features to have consistent performance 
+            # we multiply by num_features to have consistent performance
             # with the increase of the number of features
             np.fill_diagonal(correlations, correlations[:, -1] * (- alpha * num_features))
             # Note: we only add terms on and above the diagonal
@@ -203,7 +217,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         return cqm
 
     def mutual_information_cqm(
-        self,   
+        self,
         X: npt.ArrayLike,
         y: npt.ArrayLike,
         *,
@@ -217,16 +231,16 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         n_neighbors: int = 4,
         n_jobs: typing.Union[None, int] = None,
         random_state: typing.Union[None, int] = None,
-        ) -> dimod.ConstrainedQuadraticModel:
+    ) -> dimod.ConstrainedQuadraticModel:
         """Build a constrained quadratic model for feature selection.
 
-        If ``conditional`` is True then the conditional mutual information 
+        If ``conditional`` is True then the conditional mutual information
         criterion from [2] is used, and if ``conditional`` is False then
         mutual information based criterion from [1] is used.
-        
-        For computation of mutual information and conditional mutual information 
-        
-        
+
+        For computation of mutual information and conditional mutual information
+
+
         Args:
             X:
                 Feature vectors formatted as a numerical 2D array-like.
@@ -249,16 +263,16 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             conditional: bool, default=True
                 Whether to compute the off-diagonal terms using the conditional mutual
                 information or joint mutual information
-            discrete_features: 
-                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
-            discrete_target:
-                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+            discrete_features:
+                See :func:`sklearn.feature_selection.mutual_info_regression`
+            discrete_target: bool, default=False
+                Whether the target variable `y` is discrete
             n_neighbors:
-                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+                See :func:`sklearn.feature_selection.mutual_info_regression`
             copy:
-                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+                See :func:`sklearn.feature_selection.mutual_info_regression`
             random_state:
-                See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+                See :func:`sklearn.feature_selection.mutual_info_regression`
             n_jobs: int, default=None
                 The number of parallel jobs to run for the conditional mutual information
                 computation. The parallelization is over the columns of `X`.
@@ -269,17 +283,18 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         Returns:
             A constrained quadratic model.
 
-        References:    
-        .. [1] Peng, F. Long, and C. Ding. Feature selection based on mutual information criteria of max-dependency,
-               max-relevance, and min-redundancy. IEEE Transactions on pattern analysis and machine intelligence,
-               27(8):1226–1238, 2005.
-        .. [2] X. V. Nguyen, J. Chan, S. Romano, and J. Bailey. Effective global approaches for mutual information 
-               based feature selection. In Proceedings of the 20th ACM SIGKDD international conference on 
-               Knowledge discovery and data mining, pages 512–521. ACM, 2014.
+        References:
+        .. [1] Peng, F. Long, and C. Ding. Feature selection based on mutual information criteria
+               of max-dependency, max-relevance, and min-redundancy. IEEE Transactions on pattern
+               analysis and machine intelligence, 27(8):1226–1238, 2005.
+        .. [2] X. V. Nguyen, J. Chan, S. Romano, and J. Bailey. Effective global approaches for
+               mutual information based feature selection. In Proceedings of the 20th ACM SIGKDD
+               international conference on Knowledge discovery and data mining,
+               pages 512–521. ACM, 2014.
         """
-        
+
         self._check_params(X, y, alpha, num_features)
-        
+
         cqm = dimod.ConstrainedQuadraticModel()
         cqm.add_variables(dimod.BINARY, X.shape[1])
 
@@ -289,30 +304,30 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             '==' if strict else '<=',
             num_features,
             label=f"{num_features}-hot",
-            )
+        )
 
         mi = estimate_mi_matrix(
-            X, y, 
-            discrete_features=discrete_features, 
+            X, y,
+            discrete_features=discrete_features,
             discrete_target=discrete_target,
             n_neighbors=n_neighbors, copy=copy,
             random_state=random_state, n_jobs=n_jobs,
             conditional=conditional)
-        
-        if conditional:            
+
+        if conditional:
+            # method from [2]_.
             np.multiply(mi, -1, out=mi)
         else:
+            # method from [1]_.
             # mutpliypling off-diagonal ones with -1
             diagonal = -np.diag(mi).copy()
             # mutpliypling off-diagonal ones with alpha
-            np.multiply(mi, alpha, out=mi)            
+            np.multiply(mi, alpha, out=mi)
             np.fill_diagonal(mi, diagonal)
-        
-        self.mi_matrix = mi
-        
+
         it = np.nditer(mi, flags=['multi_index'], op_flags=[['readonly']])
         cqm.set_objective((*it.multi_index, x) for x in it if x)
-        return cqm        
+        return cqm
 
     def fit(
         self,
@@ -416,7 +431,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                       num_features: int):
         X = np.atleast_2d(np.asarray(X))
         y = np.asarray(y)
-        
+
         if X.ndim != 2:
             raise ValueError("X must be a 2-dimensional array-like")
 
@@ -424,7 +439,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             raise ValueError("y must be a 1-dimensional array-like")
 
         if y.shape[0] != X.shape[0]:
-            raise ValueError(f"requires: X.shape[0] == y.shape[0] but {X.shape[0]} != {y.shape[0]}")
+            raise ValueError(
+                f"requires: X.shape[0] == y.shape[0] but {X.shape[0]} != {y.shape[0]}")
 
         if not 0 <= alpha <= 1:
             raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
@@ -436,54 +452,63 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             raise ValueError("X must have at least two rows")
 
 
-def estimate_mi_matrix(    
+def estimate_mi_matrix(
     X: npt.ArrayLike,
     y: npt.ArrayLike,
-    discrete_features: typing.Union[str, npt.ArrayLike]="auto",
+    discrete_features: typing.Union[str, npt.ArrayLike] = "auto",
     discrete_target: bool = False,
     n_neighbors: int = 4,
     conditional: bool = True,
     copy: bool = True,
     random_state: typing.Union[None, int] = None,
     n_jobs: typing.Union[None, int] = None,
-    ) -> npt.ArrayLike:
+) -> npt.ArrayLike:
     """
     For the feature array `X` and the target array `y` computes
-    the matrix of (conditional) mutual information interactions. 
-    
-    cmi_{i, j} = I(x_i; y)
-    
+    the matrix of (conditional) mutual information interactions.
+    The matrix is defined as follows:
+
+    `M_(i, i) = I(x_i; y)`
+
     If `conditional = True`, then the off-diagonal terms are computed:
-    
-    cmi_{i, j} = (I(x_i; y| x_j) + I(x_j; y| x_i)) / 2
-    
+
+    `M_(i, j) = (I(x_i; y| x_j) + I(x_j; y| x_i)) / 2`
+
     Otherwise
-    
-    cmi_{i, j} = I(x_i; x_j)
-    
-    Computation of I(x; y) uses the scikit-learn implementation, i.e.,
-    :func:`sklearn.feature_selection._mutual_info._estimate_mi`. The computation 
-    of I(x; y| z) is based on
-    https://github.com/jannisteunissen/mutual_information
+
+    `M_(i, j) = I(x_i; x_j)`
+
+    Computation of I(x; y) uses modified scikit-learn methods.
+    The computation of I(x; y| z) is based on
+    https://github.com/jannisteunissen/mutual_information and [3]_.
+
+    The method can be computationally expensive for a large number of features (> 1000) and
+    a large number of samples (> 100000). In this case, it can be advisable to downsample the
+    dataset.
+
+    The estimation methods are linear in the number of outcomes (labels) of discrete distributions.
+    It may be beneficial to treat the discrete distrubitions with a large number of labels as
+    continuous distributions.
 
     Args:
-        X: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
-        
-        y: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
-        
+        X: See :func:`sklearn.feature_selection.mutual_info_regression`
+
+        y: See :func:`sklearn.feature_selection.mutual_info_regression`
+
         conditional: bool, default=True
             Whether to compute the off-diagonal terms using the conditional mutual
             information or joint mutual information
 
-        discrete_features: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
-        
-        discrete_target: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
-        
-        n_neighbors: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
-        
-        copy: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
-        
-        random_state: See :func:`sklearn.feature_selection._mutual_info._estimate_mi`
+        discrete_features: See :func:`sklearn.feature_selection.mutual_info_regression`
+
+        discrete_target: bool, default=False
+            Whether the target variable `y` is discrete
+
+        n_neighbors: See :func:`sklearn.feature_selection.mutual_info_regression`
+
+        copy: See :func:`sklearn.feature_selection.mutual_info_regression`
+
+        random_state: See :func:`sklearn.feature_selection.mutual_info_regression`
 
         n_jobs: int, default=None
             The number of parallel jobs to run for the conditional mutual information
@@ -491,13 +516,13 @@ def estimate_mi_matrix(
             ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
             ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
             for more details.
-        
+
     Returns:
         mi_matrix : ndarray, shape (n_features, n_features)
         Interaction matrix between the features using (conditional) mutual information.
         A negative value will be replaced by 0.
 
-    References:    
+    References:
     .. [1] A. Kraskov, H. Stogbauer and P. Grassberger, "Estimating mutual
            information". Phys. Rev. E 69, 2004.
     .. [2] B. C. Ross "Mutual Information between Discrete and Continuous
@@ -508,7 +533,7 @@ def estimate_mi_matrix(
     """
     X, y = check_X_y(X, y, accept_sparse="csc", y_numeric=not discrete_target)
     n_samples, n_features = X.shape
-    
+
     if isinstance(discrete_features, (str, bool)):
         if isinstance(discrete_features, str):
             if discrete_features == "auto":
@@ -525,28 +550,26 @@ def estimate_mi_matrix(
         else:
             discrete_mask = discrete_features
 
-    # copying X if needed
-    if copy:
-        X = X.copy()
-  
-    # Computing the diagonal terms
-    mutual_info_args = dict(X=X, y=y,
-                              discrete_features=discrete_mask,
-                              n_neighbors=n_neighbors,
-                              copy=False, random_state=random_state)
-    # In earlier versions of sklearn functions `mutual_info_classif` and 
-    # `mutual_info_regression` do not allow for parallel computations and
-    # do not have `n_jobs` argument.
-    if "n_jobs" in signature(mutual_info_classif).parameters and \
-    "n_jobs" in signature(mutual_info_regression).parameters:
-        mutual_info_args["n_jobs"] = n_jobs
-    if discrete_target:
-        diagonal_vals = mutual_info_classif(**mutual_info_args)
-    else:
-        diagonal_vals = mutual_info_regression(**mutual_info_args)
-        # the target y is not modified even if copy=False
-        # https://github.com/scikit-learn/scikit-learn/issues/28793
-        rng = check_random_state(random_state)        
+    continuous_mask = ~discrete_mask
+    if np.any(continuous_mask) and issparse(X):
+        raise ValueError("Sparse matrix `X` can't have continuous features.")
+
+    rng = check_random_state(random_state)
+    if np.any(continuous_mask):
+        X = X.astype(np.float64, copy=copy)
+        X[:, continuous_mask] = scale(
+            X[:, continuous_mask], with_mean=False, copy=False
+        )
+
+        # Add small noise to continuous features as advised in Kraskov et. al.
+        means = np.maximum(1, np.mean(np.abs(X[:, continuous_mask]), axis=0))
+        X[:, continuous_mask] += (
+            1e-10
+            * means
+            * rng.standard_normal(size=(n_samples, np.sum(continuous_mask)))
+        )
+
+    if not discrete_target:
         y = scale(y, with_mean=False)
         y += (
             1e-10
@@ -555,19 +578,25 @@ def estimate_mi_matrix(
         )
 
     mi_matrix = np.zeros((n_features, n_features), dtype=np.float64)
+    # Computing the diagonal terms
+    diagonal_vals = Parallel(n_jobs=n_jobs)(
+        delayed(_compute_mi)(x, y, discrete_feature, discrete_target, n_neighbors)
+        for x, discrete_feature in zip(_iterate_columns(X), discrete_mask)
+    )
     np.fill_diagonal(mi_matrix, diagonal_vals)
+    # Computing the off-diagonal terms
     off_diagonal_iter = combinations(zip(_iterate_columns(X), discrete_mask), 2)
     if conditional:
-        off_diagonal_vals = Parallel(n_jobs=n_jobs, verbose=1)(
-            delayed(_compute_off_diagonal_cmi)
+        off_diagonal_vals = Parallel(n_jobs=n_jobs)(
+            delayed(_compute_cmi_distance)
             (xi, xj, y, discrete_feature_i, discrete_feature_j, discrete_target, n_neighbors)
             for (xi, discrete_feature_i), (xj, discrete_feature_j) in off_diagonal_iter)
     else:
-        off_diagonal_vals = Parallel(n_jobs=n_jobs, verbose=1)(
-            delayed(_compute_off_diagonal_mi)
+        off_diagonal_vals = Parallel(n_jobs=n_jobs)(
+            delayed(_compute_mi)
             (xi, xj, discrete_feature_i, discrete_feature_j, n_neighbors)
             for (xi, discrete_feature_i), (xj, discrete_feature_j) in off_diagonal_iter)
-            
+
     off_diagonal_val = iter(off_diagonal_vals)
     for i, j in combinations(range(n_features), 2):
         mi_matrix[i, j] = mi_matrix[j, i] = next(off_diagonal_val)

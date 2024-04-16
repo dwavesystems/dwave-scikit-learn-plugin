@@ -122,14 +122,14 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
 
         clf.predict(X)
 
-    def test_alpha_0(self):        
+    def test_alpha_0(self):
         cqm = SelectFromQuadraticModel().correlation_cqm(X=self.X, y=self.y, num_features=3, alpha=0)
         self.assertTrue(not any(cqm.objective.linear.values()))
 
     def test_alpha_1_no_quadratic(self):
         cqm = SelectFromQuadraticModel().correlation_cqm(X=self.X, y=self.y, num_features=3, alpha=1)
         self.assertTrue(not any(cqm.objective.quadratic.values()))
-        
+
     def test_alpha_1(self):
         rng = np.random.default_rng(42)
 

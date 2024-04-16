@@ -45,31 +45,22 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os.path
 import tempfile
-import typing
 import unittest
 
 import numpy as np
-import numpy.typing as npt
 
 from dwave.plugins.sklearn.utilities import (
     corrcoef, cov, dot_2d,
-    _compute_off_diagonal_cmi,
-    _compute_off_diagonal_mi,
+    _compute_mi,
     _compute_cmip_c, _compute_cmip_d,
     _compute_cmip_cdc, _compute_cmip_ccd
 )
-from dwave.plugins.sklearn.transformers import estimate_mi_matrix
-from scipy.linalg import norm
-from scipy.sparse import issparse
 from scipy.special import digamma
-from sklearn.feature_selection._mutual_info import _compute_mi
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from sklearn.neighbors import KDTree
 from sklearn.preprocessing import scale
-from sklearn.utils import check_random_state
-from sklearn.utils.validation import check_array, check_X_y
+
 
 class TestCorrCoef(unittest.TestCase):
     def test_agreement(self):
@@ -198,8 +189,8 @@ class TestDot2D(unittest.TestCase):
 
 
 class TestMI(unittest.TestCase):
-    def test_cmi_cdc(self):
-        np.random.seed(42)        
+    def test_cmi_mixed(self):
+        np.random.seed(42)
         n_samples, n_neighbors = 4003, 4
         c1 = np.random.randn(n_samples,)
         n_ss = 1001
@@ -219,7 +210,7 @@ class TestMI(unittest.TestCase):
             msg="Computation for mixed continuous/discrete conditional mutual information is not accurate")
 
     def test_cmi_symmetry(self):
-        np.random.seed(42)        
+        np.random.seed(42)
         n_samples, n_neighbors = 4003, 4
         # Test continuous implementation
         Xy = np.random.randn(n_samples, 3)
@@ -240,9 +231,9 @@ class TestMI(unittest.TestCase):
         cmi_ji_pair = _compute_cmip_ccd(c2, c1, d, n_neighbors=n_neighbors)
         self.assertAlmostEqual(
             sum(cmi_ij_pair), sum(cmi_ji_pair), places=3,
-            msg="Computation for mixed continuous/discrete conditional mutual information is not symmetric")        
+            msg="Computation for mixed continuous/discrete conditional mutual information is not symmetric")
 
-    def test_cmi(self):
+    def test_cmi_discrete(self):
         """
         We test the algorithm using the formula `I(x;y|z) = I(x;y) + I(z;y) - I(z;y|x)`.
         Since the mutual information data is an sklearn function,
@@ -250,7 +241,7 @@ class TestMI(unittest.TestCase):
         it is highly likely that formula is valid only if our algorithm is correct.
         """
         np.random.seed(42)
-        # Test discrete implementation       
+        # Test discrete implementation
         n_samples, n_ss, n_neighbors = 103, 51, 4
         xi = np.random.randint(0, 11, (n_samples, ))
         xj = np.hstack((
@@ -273,61 +264,41 @@ class TestMI(unittest.TestCase):
             msg="Discrete conditional mutual information computation is not symmetric")
 
     def test_mi(self):
-        np.random.seed(42)
-        # Test discrete implementation       
-        n_samples, n_ss, n_neighbors = 103, 51, 4
+        from sklearn.feature_selection._mutual_info import _compute_mi_cd, _compute_mi_cc
+        from sklearn.metrics.cluster import mutual_info_score
+        # Test discrete implementation
+        n_samples, n_ss, n_neighbors, random_state = 103, 51, 4, 15
+        np.random.seed(random_state)
         xi = np.random.randint(0, 11, (n_samples, ))
         xj = np.hstack((
             np.random.randint(-2, 1, (n_ss, )),
             np.random.randint(10, 14, (n_samples-n_ss, ))))
         np.random.shuffle(xi)
         np.random.shuffle(xj)
-        mi_ij = _compute_off_diagonal_mi(
-            xi.reshape(-1, 1), xj, True, True, n_neighbors=n_neighbors)
-        mi_ji = _compute_off_diagonal_mi(
-            xi.reshape(-1, 1), xj, True, True, n_neighbors=n_neighbors)
-        mi_ij_cl = mutual_info_classif(xi.reshape(-1, 1), xj, discrete_features=True)
+        xi_c = scale(np.random.randn(n_samples), with_mean=False)
+        xj_c = scale(np.random.randn(n_samples), with_mean=False)
+
+        mi_ij = _compute_mi(
+            xi, xj, True, True, n_neighbors=n_neighbors)
+        mi_ij_cl = mutual_info_score(xi, xj)
         self.assertTrue(
             np.allclose(mi_ij_cl, mi_ij),
             msg="Discrete mutual information is not computed correctly")
-        self.assertTrue(
-            np.allclose(mi_ij_cl, mi_ji),
-            msg="Discrete mutual information is not computed correctly")
 
-        mi_ij = _compute_off_diagonal_mi(
-            xi, xj, False, True, n_neighbors=n_neighbors)
-        mi_ji = _compute_off_diagonal_mi(
-            xi, xj, False, True, n_neighbors=n_neighbors)
-        mi_ij_cl = mutual_info_classif(
-            xi.reshape(-1, 1), xj, discrete_features=False)
-        self.assertTrue(
-            np.allclose(mi_ij_cl, mi_ij),
-            msg="Mixed mutual information is not computed correctly")
-        self.assertTrue(
-            np.allclose(mi_ij_cl, mi_ji),
-            msg="Mixed mutual information is not computed correctly")
-
-        xj = np.random.randn(n_samples)
-        mi_ij = _compute_off_diagonal_mi(
-            xi, xj, True, False, n_neighbors=n_neighbors)
-        mi_ij_cl = mutual_info_regression(
-            xi.reshape(-1, 1), xj,
-            discrete_features=True, n_neighbors=n_neighbors)
+        mi_ij = _compute_mi(
+            xi_c, xj, False, True, n_neighbors=n_neighbors)
+        mi_ij_cl = _compute_mi_cd(xi_c, xj, n_neighbors=n_neighbors)
         self.assertTrue(
             np.allclose(mi_ij_cl, mi_ij, atol=1e-5),
-            msg="Continuous mutual information is not computed correctly")
+            msg=f"Error in continuous features/discrete target MI estimation is larger than expected {abs(mi_ij_cl-mi_ij)}")
 
-        xi = np.random.randn(n_samples)
-        mi_ij = _compute_off_diagonal_mi(
-            xi, xj, False, False, n_neighbors=n_neighbors)
-        mi_ij_cl = mutual_info_regression(
-            xi.reshape(-1, 1), xj,
-            discrete_features=False, n_neighbors=n_neighbors)
+        mi_ij = _compute_mi(xi_c, xj_c, False, False, n_neighbors=n_neighbors)
+        mi_ij_cl = _compute_mi_cc(xi_c, xj_c, n_neighbors=n_neighbors)
         self.assertTrue(
-            np.allclose(mi_ij_cl, mi_ij, atol=1e-3),
-            msg="Continuous mutual information is not computed correctly")
-        
-    def test_implementation(self):
+            np.allclose(mi_ij_cl, mi_ij, atol=1e-5),
+            msg=f"Error in purely continuous MI is larger than expected {abs(mi_ij_cl-mi_ij)}")
+
+    def test_cmi_continuous(self):
         # methods from https://github.com/jannisteunissen/mutual_information
         def _compute_cmi_t(x, z, y, n_neighbors):
             n_samples = len(x)
@@ -338,20 +309,20 @@ class TestMI(unittest.TestCase):
             xyz = np.hstack((x, y, z))
             k = np.full(n_samples, n_neighbors)
             radius = get_radius_kneighbors(xyz, n_neighbors)
-            
+
             mask = (radius == 0)
             if mask.sum() > 0:
                 vals, ix, counts = np.unique(xyz[mask], axis=0,
-                                        return_inverse=True,
-                                        return_counts=True)
+                                             return_inverse=True,
+                                             return_counts=True)
                 k[mask] = counts[ix] - 1
-            
+
             nxz = num_points_within_radius(np.hstack((x, z)), radius)
             nyz = num_points_within_radius(np.hstack((y, z)), radius)
             nz = num_points_within_radius(z, radius)
 
             cmi = max(0, np.mean(digamma(k)) - np.mean(digamma(nxz + 1))
-                    - np.mean(digamma(nyz + 1)) + np.mean(digamma(nz + 1)))
+                      - np.mean(digamma(nyz + 1)) + np.mean(digamma(nz + 1)))
             return cmi
 
         def get_radius_kneighbors(x, n_neighbors):
@@ -381,15 +352,15 @@ class TestMI(unittest.TestCase):
             kd = KDTree(x, metric="chebyshev")
             nx = kd.query_radius(x, radius, count_only=True, return_distance=False)
             return np.array(nx) - 1.0
-        
+
         np.random.seed(42)
         n_samples, n_neighbors = 103, 4
         # Test continuous implementation
         Xy = np.random.randn(n_samples, 3)
-        cmi_t_01 = _compute_cmi_t(Xy[:,0], Xy[:,1], Xy[:,2], n_neighbors=n_neighbors)
-        cmi_t_10 = _compute_cmi_t(Xy[:,1], Xy[:,0], Xy[:,2], n_neighbors=n_neighbors)
+        cmi_t_01 = _compute_cmi_t(Xy[:, 0], Xy[:, 1], Xy[:, 2], n_neighbors=n_neighbors)
+        cmi_t_10 = _compute_cmi_t(Xy[:, 1], Xy[:, 0], Xy[:, 2], n_neighbors=n_neighbors)
 
-        cmi_ij, cmi_ji = _compute_cmip_c(Xy[:,0], Xy[:,1], Xy[:,2], n_neighbors=n_neighbors)
+        cmi_ij, cmi_ji = _compute_cmip_c(Xy[:, 0], Xy[:, 1], Xy[:, 2], n_neighbors=n_neighbors)
 
         self.assertAlmostEqual(
             max(cmi_t_01, 0), cmi_ij, places=5,
