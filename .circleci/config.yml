@@ -208,9 +208,6 @@ workflows:
               python-version: &python-versions ["3.8.6", "3.9.0", "3.10.0", "3.11.0"]
               pip-constraints:
                 - "scikit-learn==1.2.1"  # lowest supported by package
-                # - "scikit-learn~=1.0.0"  # 1.0.2 is the highest in ~=1.0.0
-                # - "scikit-learn~=1.1.0"
-                # - "scikit-learn~=1.2.0"  # latest in current minor as of March 2023
                 - "scikit-learn~=1.0"  # latest in current major
 
       - test-macos:

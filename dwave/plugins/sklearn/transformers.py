@@ -20,22 +20,14 @@ import typing
 
 import dimod
 from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
-from dwave.plugins.sklearn.utilities import (
-    corrcoef,
-    _compute_cmi_distance,
-    _compute_mi,
-    _iterate_columns)
+from dwave.plugins.sklearn._conditional_mutual_info import estimate_mi_matrix
+from dwave.plugins.sklearn.utilities import corrcoef
 from dwave.system import LeapHybridCQMSampler
 import numpy as np
 import numpy.typing as npt
-from scipy.sparse import issparse
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectorMixin
-from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
-from sklearn.preprocessing import scale
-from sklearn.utils import check_random_state
-from sklearn.utils.parallel import Parallel, delayed
-from sklearn.utils.validation import check_is_fitted, check_array, check_X_y
+from sklearn.utils.validation import check_is_fitted
 
 __all__ = ["SelectFromQuadraticModel"]
 
@@ -450,154 +442,3 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         if X.shape[0] <= 1:
             raise ValueError("X must have at least two rows")
-
-
-def estimate_mi_matrix(
-    X: npt.ArrayLike,
-    y: npt.ArrayLike,
-    discrete_features: typing.Union[str, npt.ArrayLike] = "auto",
-    discrete_target: bool = False,
-    n_neighbors: int = 4,
-    conditional: bool = True,
-    copy: bool = True,
-    random_state: typing.Union[None, int] = None,
-    n_jobs: typing.Union[None, int] = None,
-) -> npt.ArrayLike:
-    """
-    For the feature array `X` and the target array `y` computes
-    the matrix of (conditional) mutual information interactions.
-    The matrix is defined as follows:
-
-    `M_(i, i) = I(x_i; y)`
-
-    If `conditional = True`, then the off-diagonal terms are computed:
-
-    `M_(i, j) = (I(x_i; y| x_j) + I(x_j; y| x_i)) / 2`
-
-    Otherwise
-
-    `M_(i, j) = I(x_i; x_j)`
-
-    Computation of I(x; y) uses modified scikit-learn methods.
-    The computation of I(x; y| z) is based on
-    https://github.com/jannisteunissen/mutual_information and [3]_.
-
-    The method can be computationally expensive for a large number of features (> 1000) and
-    a large number of samples (> 100000). In this case, it can be advisable to downsample the
-    dataset.
-
-    The estimation methods are linear in the number of outcomes (labels) of discrete distributions.
-    It may be beneficial to treat the discrete distrubitions with a large number of labels as
-    continuous distributions.
-
-    Args:
-        X: See :func:`sklearn.feature_selection.mutual_info_regression`
-
-        y: See :func:`sklearn.feature_selection.mutual_info_regression`
-
-        conditional: bool, default=True
-            Whether to compute the off-diagonal terms using the conditional mutual
-            information or joint mutual information
-
-        discrete_features: See :func:`sklearn.feature_selection.mutual_info_regression`
-
-        discrete_target: bool, default=False
-            Whether the target variable `y` is discrete
-
-        n_neighbors: See :func:`sklearn.feature_selection.mutual_info_regression`
-
-        copy: See :func:`sklearn.feature_selection.mutual_info_regression`
-
-        random_state: See :func:`sklearn.feature_selection.mutual_info_regression`
-
-        n_jobs: int, default=None
-            The number of parallel jobs to run for the conditional mutual information
-            computation. The parallelization is over the columns of `X`.
-            ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
-            ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
-            for more details.
-
-    Returns:
-        mi_matrix : ndarray, shape (n_features, n_features)
-        Interaction matrix between the features using (conditional) mutual information.
-        A negative value will be replaced by 0.
-
-    References:
-    .. [1] A. Kraskov, H. Stogbauer and P. Grassberger, "Estimating mutual
-           information". Phys. Rev. E 69, 2004.
-    .. [2] B. C. Ross "Mutual Information between Discrete and Continuous
-           Data Sets". PLoS ONE 9(2), 2014.
-    .. [3] Mesner, Octavio César, and Cosma Rohilla Shalizi. "Conditional
-           mutual information estimation for mixed, discrete and continuous
-           data." IEEE Transactions on Information Theory 67.1 (2020): 464-484.
-    """
-    X, y = check_X_y(X, y, accept_sparse="csc", y_numeric=not discrete_target)
-    n_samples, n_features = X.shape
-
-    if isinstance(discrete_features, (str, bool)):
-        if isinstance(discrete_features, str):
-            if discrete_features == "auto":
-                discrete_features = issparse(X)
-            else:
-                raise ValueError("Invalid string value for discrete_features.")
-        discrete_mask = np.empty(n_features, dtype=bool)
-        discrete_mask.fill(discrete_features)
-    else:
-        discrete_features = check_array(discrete_features, ensure_2d=False)
-        if np.issubdtype(discrete_features.dtype, bool):
-            discrete_mask = np.zeros(n_features, dtype=bool)
-            discrete_mask[discrete_features] = True
-        else:
-            discrete_mask = discrete_features
-
-    continuous_mask = ~discrete_mask
-    if np.any(continuous_mask) and issparse(X):
-        raise ValueError("Sparse matrix `X` can't have continuous features.")
-
-    rng = check_random_state(random_state)
-    if np.any(continuous_mask):
-        X = X.astype(np.float64, copy=copy)
-        X[:, continuous_mask] = scale(
-            X[:, continuous_mask], with_mean=False, copy=False
-        )
-
-        # Add small noise to continuous features as advised in Kraskov et. al.
-        means = np.maximum(1, np.mean(np.abs(X[:, continuous_mask]), axis=0))
-        X[:, continuous_mask] += (
-            1e-10
-            * means
-            * rng.standard_normal(size=(n_samples, np.sum(continuous_mask)))
-        )
-
-    if not discrete_target:
-        y = scale(y, with_mean=False)
-        y += (
-            1e-10
-            * np.maximum(1, np.mean(np.abs(y)))
-            * rng.standard_normal(size=n_samples)
-        )
-
-    mi_matrix = np.zeros((n_features, n_features), dtype=np.float64)
-    # Computing the diagonal terms
-    diagonal_vals = Parallel(n_jobs=n_jobs)(
-        delayed(_compute_mi)(x, y, discrete_feature, discrete_target, n_neighbors)
-        for x, discrete_feature in zip(_iterate_columns(X), discrete_mask)
-    )
-    np.fill_diagonal(mi_matrix, diagonal_vals)
-    # Computing the off-diagonal terms
-    off_diagonal_iter = combinations(zip(_iterate_columns(X), discrete_mask), 2)
-    if conditional:
-        off_diagonal_vals = Parallel(n_jobs=n_jobs)(
-            delayed(_compute_cmi_distance)
-            (xi, xj, y, discrete_feature_i, discrete_feature_j, discrete_target, n_neighbors)
-            for (xi, discrete_feature_i), (xj, discrete_feature_j) in off_diagonal_iter)
-    else:
-        off_diagonal_vals = Parallel(n_jobs=n_jobs)(
-            delayed(_compute_mi)
-            (xi, xj, discrete_feature_i, discrete_feature_j, n_neighbors)
-            for (xi, discrete_feature_i), (xj, discrete_feature_j) in off_diagonal_iter)
-
-    off_diagonal_val = iter(off_diagonal_vals)
-    for i, j in combinations(range(n_features), 2):
-        mi_matrix[i, j] = mi_matrix[j, i] = next(off_diagonal_val)
-    return mi_matrix
