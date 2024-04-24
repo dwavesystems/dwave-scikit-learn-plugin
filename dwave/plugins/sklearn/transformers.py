@@ -239,13 +239,11 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 Class labels formatted as a numerical 1D array-like.
             alpha:
                 Hyperparameter between 0 and 1 that controls the relative weight of
-                the relevance and redundancy terms.
-                ``alpha=0`` places no weight on the quality of the features,
-                therefore the features will be selected as to minimize the
-                redundancy without any consideration to quality.
-                ``alpha=1`` places the maximum weight on the quality of the features,
+                the relevance and redundancy terms. Active if conditional=False
+                ``alpha=0`` places the maximum weight on the feature redundancy.
+                ``alpha=1`` places no weight on the feature redudancy,
                 and therefore will be equivalent to using
-                :class:`sklearn.feature_selection.SelectKBest`.
+                :class:`sklearn.feature_selection.SelectKBest` the with mutual information metric.
             num_features:
                 The number of features to select.
             strict:
@@ -312,8 +310,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             # method from [1]_.
             # mutpliypling off-diagonal ones with -1
             diagonal = -np.diag(mi).copy()
-            # mutpliypling off-diagonal ones with alpha
-            np.multiply(mi, alpha, out=mi)
+            # mutpliypling off-diagonal ones with 1-alpha
+            np.multiply(mi, (1-alpha), out=mi)
             np.fill_diagonal(mi, diagonal)
 
         it = np.nditer(mi, flags=['multi_index'], op_flags=[['readonly']])
