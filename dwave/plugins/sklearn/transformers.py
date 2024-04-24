@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from itertools import combinations
 import tempfile
 import typing
 
