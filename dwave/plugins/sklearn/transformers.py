@@ -14,23 +14,19 @@
 
 from __future__ import annotations
 
-import itertools
-import logging
 import tempfile
 import typing
-import warnings
 
 import dimod
+from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
+from dwave.plugins.sklearn._conditional_mutual_info import estimate_mi_matrix
+from dwave.plugins.sklearn.utilities import corrcoef
+from dwave.system import LeapHybridCQMSampler
 import numpy as np
 import numpy.typing as npt
-
-from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
-from dwave.system import LeapHybridCQMSampler
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectorMixin
 from sklearn.utils.validation import check_is_fitted
-
-from dwave.plugins.sklearn.utilities import corrcoef
 
 __all__ = ["SelectFromQuadraticModel"]
 
@@ -50,21 +46,36 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             :class:`sklearn.feature_selection.SelectKBest`.
         num_features:
             The number of features to select.
+        method:
+            If equal to ``correlation`` uses a correlation as a criterion for
+            choosing the features according to [1]_. If equal to ``mutual_information``
+            uses mutual information criteria [2]_ or [3]_ (advances feature).
         time_limit:
             The time limit for the run on the hybrid solver.
 
+    .. [1] [Milne et al.] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
+            Selection in Credit Scoring and Classification Using a Quantum Annealer."
+            1QBit; White Paper.
+            https://1qbit.com/whitepaper/optimal-feature-selection-in-credit-scoring-classification-using-quantum-annealer
+    .. [2] Peng, F. Long, and C. Ding. Feature selection based on mutual information criteria
+            of max-dependency, max-relevance, and min-redundancy. IEEE Transactions on pattern
+            analysis and machine intelligence, 27(8):1226–1238, 2005.
+    .. [3] X. V. Nguyen, J. Chan, S. Romano, and J. Bailey. Effective global approaches for
+            mutual information based feature selection. In Proceedings of the 20th ACM SIGKDD
+            international conference on Knowledge discovery and data mining,
+            pages 512–521. ACM, 2014.
     """
 
     ACCEPTED_METHODS = [
         "correlation",
-        # "mutual information",  # todo
-        ]
+        "mutual_information",
+    ]
 
     def __init__(
         self,
         *,
         alpha: float = .5,
-        method: str = "correlation",  # undocumented until there is another supported
+        method: str = "correlation",
         num_features: int = 10,
         time_limit: typing.Optional[float] = None,
     ):
@@ -110,8 +121,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         except AttributeError:
             raise RuntimeError("fit hasn't been run yet")
 
-    @staticmethod
     def correlation_cqm(
+        self,
         X: npt.ArrayLike,
         y: npt.ArrayLike,
         *,
@@ -122,7 +133,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         """Build a constrained quadratic model for feature selection.
 
         This method is based on maximizing influence and independence as
-        measured by correlation [Milne et al.]_.
+        measured by correlation [1]_.
 
         Args:
             X:
@@ -147,32 +158,12 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         Returns:
             A constrained quadratic model.
 
-        .. [Milne et al.] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
+        .. [1] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
             Selection in Credit Scoring and Classification Using a Quantum Annealer."
             1QBit; White Paper.
             https://1qbit.com/whitepaper/optimal-feature-selection-in-credit-scoring-classification-using-quantum-annealer
         """
-
-        X = np.atleast_2d(np.asarray(X))
-        y = np.asarray(y)
-
-        if X.ndim != 2:
-            raise ValueError("X must be a 2-dimensional array-like")
-
-        if y.ndim != 1:
-            raise ValueError("y must be a 1-dimensional array-like")
-
-        if y.shape[0] != X.shape[0]:
-            raise ValueError(f"requires: X.shape[0] == y.shape[0] but {X.shape[0]} != {y.shape[0]}")
-
-        if not 0 <= alpha <= 1:
-            raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
-
-        if num_features <= 0:
-            raise ValueError(f"num_features must be a positive integer, given {num_features}")
-
-        if X.shape[0] <= 1:
-            raise ValueError("X must have at least two rows")
+        self._check_params(X, y, alpha, num_features)
 
         cqm = dimod.ConstrainedQuadraticModel()
         cqm.add_variables(dimod.BINARY, X.shape[1])
@@ -183,7 +174,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             '==' if strict else '<=',
             num_features,
             label=f"{num_features}-hot",
-            )
+        )
 
         with tempfile.TemporaryFile() as fX, tempfile.TemporaryFile() as fout:
             # we make a copy of X because we'll be modifying it in-place within
@@ -198,25 +189,137 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 dtype=np.result_type(X, y),
                 mode="w+",
                 shape=(X_copy.shape[1], X_copy.shape[1]),
-                )
-
+            )
             # main calculation. It modifies X_copy in-place
             corrcoef(X_copy, out=correlations, rowvar=False, copy=False)
-
             # we don't care about the direction of correlation in terms of
             # the penalty/quality
             np.absolute(correlations, out=correlations)
-
+            # multiplying all but last columns and rows with (1 - alpha)
+            np.multiply(correlations[:-1, :-1], (1 - alpha), out=correlations[:-1, :-1])
             # our objective
-            # we multiply by 2 because the matrix is symmetric
-            np.fill_diagonal(correlations, correlations[:, -1] * (-2 * alpha * num_features))
-
-            # Note: the full symmetric matrix (with both upper- and lower-diagonal
-            # entries for each correlation coefficient) is retained for consistency with
-            # the original formulation from Milne et al.
+            # we multiply by num_features to have consistent performance
+            # with the increase of the number of features
+            np.fill_diagonal(correlations, correlations[:, -1] * (- alpha * num_features))
+            # Note: we only add terms on and above the diagonal
             it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
             cqm.set_objective((*it.multi_index, x) for x in it if x)
 
+        return cqm
+
+    def mutual_information_cqm(
+        self,
+        X: npt.ArrayLike,
+        y: npt.ArrayLike,
+        *,
+        num_features: int,
+        alpha: float = 0.5,
+        strict: bool = True,
+        conditional: bool = True,
+        discrete_features: typing.Union[str, npt.ArrayLike] = "auto",
+        discrete_target: bool = False,
+        copy: bool = True,
+        n_neighbors: int = 4,
+        n_jobs: typing.Union[None, int] = None,
+        random_state: typing.Union[None, int] = None,
+    ) -> dimod.ConstrainedQuadraticModel:
+        """Build a constrained quadratic model for feature selection.
+
+        If ``conditional`` is True then the conditional mutual information
+        criterion from [2] is used, and if ``conditional`` is False then
+        mutual information based criteria from [1] are used.
+
+        For computation of mutual information and conditional mutual information
+
+
+        Args:
+            X:
+                Feature vectors formatted as a numerical 2D array-like.
+            y:
+                Class labels formatted as a numerical 1D array-like.
+            alpha:
+                Hyperparameter between 0 and 1 that controls the relative weight of
+                the relevance and redundancy terms.
+                ``alpha=0`` places the maximum weight on the feature redundancy.
+                ``alpha=1`` places no weight on the feature redudancy,
+                and therefore will be equivalent to using
+                :class:`sklearn.feature_selection.SelectKBest`.
+                If conditional=True, ``alpha = 0`` is a default value in [2]_.
+                If conditional=False, ``alpha = (num_features - 1) / num_features``
+                is a default value in [1]_.
+            num_features:
+                The number of features to select.
+            strict:
+                If ``False`` the constraint on the number of selected features
+                is ``<=`` rather than ``==``.
+            conditional: bool, default=True
+                Whether to compute the off-diagonal terms using the conditional mutual
+                information or joint mutual information
+            discrete_features:
+                See :func:`sklearn.feature_selection.mutual_info_regression`
+            discrete_target: bool, default=False
+                Whether the target variable `y` is discrete
+            n_neighbors:
+                See :func:`sklearn.feature_selection.mutual_info_regression`
+            copy:
+                See :func:`sklearn.feature_selection.mutual_info_regression`
+            random_state:
+                See :func:`sklearn.feature_selection.mutual_info_regression`
+            n_jobs: int, default=None
+                The number of parallel jobs to run for the conditional mutual information
+                computation. The parallelization is over the columns of `X`.
+                ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
+                ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
+                for more details.
+
+        Returns:
+            A constrained quadratic model.
+
+        References:
+        .. [1] Peng, F. Long, and C. Ding. Feature selection based on mutual information criteria
+               of max-dependency, max-relevance, and min-redundancy. IEEE Transactions on pattern
+               analysis and machine intelligence, 27(8):1226–1238, 2005.
+        .. [2] X. V. Nguyen, J. Chan, S. Romano, and J. Bailey. Effective global approaches for
+               mutual information based feature selection. In Proceedings of the 20th ACM SIGKDD
+               international conference on Knowledge discovery and data mining,
+               pages 512–521. ACM, 2014.
+        """
+
+        self._check_params(X, y, alpha, num_features)
+
+        cqm = dimod.ConstrainedQuadraticModel()
+        cqm.add_variables(dimod.BINARY, X.shape[1])
+
+        # add the k-hot constraint
+        cqm.add_constraint(
+            ((v, 1) for v in cqm.variables),
+            '==' if strict else '<=',
+            num_features,
+            label=f"{num_features}-hot",
+        )
+
+        mi = estimate_mi_matrix(
+            X, y,
+            discrete_features=discrete_features,
+            discrete_target=discrete_target,
+            n_neighbors=n_neighbors, copy=copy,
+            random_state=random_state, n_jobs=n_jobs,
+            conditional=conditional)
+
+        diagonal = -np.diag(mi).copy()
+        if conditional:
+            # method from [2]_ with another tuning dial.
+            # mutpliypling off-diagonal ones with -(1-alpha)
+            np.multiply(mi, -(1-alpha), out=mi)
+        else:
+            # method from [1]_.
+            # mutpliypling off-diagonal ones with 1-alpha
+            np.multiply(mi, 1-alpha, out=mi)
+        # keeping the diagonal
+        np.fill_diagonal(mi, diagonal)
+
+        it = np.nditer(mi, flags=['multi_index'], op_flags=[['readonly']])
+        cqm.set_objective((*it.multi_index, x) for x in it if x)
         return cqm
 
     def fit(
@@ -227,6 +330,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         alpha: typing.Optional[float] = None,
         num_features: typing.Optional[int] = None,
         time_limit: typing.Optional[float] = None,
+        **kwargs
     ) -> SelectFromQuadraticModel:
         """Select the features to keep.
 
@@ -277,8 +381,9 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         if self.method == "correlation":
             cqm = self.correlation_cqm(X, y, num_features=num_features, alpha=alpha)
-        # elif self.method == "mutual information":
-        #     cqm = self.mutual_information_cqm(X, y, num_features=num_features)
+        elif self.method == "mutual_information":
+            cqm = self.mutual_information_cqm(
+                X, y, num_features=num_features, alpha=alpha, **kwargs)
         else:
             raise ValueError(f"only methods {self.acceptable_methods} are implemented")
 
@@ -311,3 +416,30 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
     def unfit(self):
         """Undo a previously executed ``fit`` method."""
         del self._mask
+
+    @staticmethod
+    def _check_params(X: npt.ArrayLike,
+                      y: npt.ArrayLike,
+                      alpha: float,
+                      num_features: int):
+        X = np.atleast_2d(np.asarray(X))
+        y = np.asarray(y)
+
+        if X.ndim != 2:
+            raise ValueError("X must be a 2-dimensional array-like")
+
+        if y.ndim != 1:
+            raise ValueError("y must be a 1-dimensional array-like")
+
+        if y.shape[0] != X.shape[0]:
+            raise ValueError(
+                f"requires: X.shape[0] == y.shape[0] but {X.shape[0]} != {y.shape[0]}")
+
+        if not 0 <= alpha <= 1:
+            raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
+
+        if num_features <= 0:
+            raise ValueError(f"num_features must be a positive integer, given {num_features}")
+
+        if X.shape[0] <= 1:
+            raise ValueError("X must have at least two rows")

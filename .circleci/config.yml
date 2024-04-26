@@ -205,22 +205,10 @@ workflows:
           name: test-linux-<< matrix.python-version >> | << matrix.pip-constraints >>
           matrix:
             parameters:
-              python-version: &python-versions ["3.7.9", "3.8.6", "3.9.0", "3.10.0", "3.11.0"]
+              python-version: &python-versions ["3.8.6", "3.9.0", "3.10.0", "3.11.0"]
               pip-constraints:
-                - "scikit-learn==1.0.2"  # lowest supported by package
-                # - "scikit-learn~=1.0.0"  # 1.0.2 is the highest in ~=1.0.0
-                - "scikit-learn~=1.1.0"
-                - "scikit-learn~=1.2.0"  # latest in current minor as of March 2023
+                - "scikit-learn==1.2.1"  # lowest supported by package
                 - "scikit-learn~=1.0"  # latest in current major
-            exclude:
-              # sklearn < 1.1.3 does not support Python 3.11
-              - python-version: "3.11.0"
-                pip-constraints: "scikit-learn==1.0.2"
-              # sklearn > 1.0.2 does not support Python 3.7
-              - python-version: "3.7.9"
-                pip-constraints: "scikit-learn~=1.1.0"
-              - python-version: "3.7.9"
-                pip-constraints: "scikit-learn~=1.2.0"
 
       - test-macos:
           matrix:
