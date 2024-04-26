@@ -227,7 +227,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         If ``conditional`` is True then the conditional mutual information
         criterion from [2] is used, and if ``conditional`` is False then
-        mutual information based criterion from [1] is used.
+        mutual information based criteria from [1] are used.
 
         For computation of mutual information and conditional mutual information
 
@@ -239,11 +239,14 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 Class labels formatted as a numerical 1D array-like.
             alpha:
                 Hyperparameter between 0 and 1 that controls the relative weight of
-                the relevance and redundancy terms. Active if conditional=False
+                the relevance and redundancy terms.
                 ``alpha=0`` places the maximum weight on the feature redundancy.
                 ``alpha=1`` places no weight on the feature redudancy,
                 and therefore will be equivalent to using
-                :class:`sklearn.feature_selection.SelectKBest` the with mutual information metric.
+                :class:`sklearn.feature_selection.SelectKBest`.
+                If conditional=True, ``alpha = 0`` is a default value in [2]_.
+                If conditional=False, ``alpha = (num_features - 1) / num_features``
+                is a default value in [1]_.
             num_features:
                 The number of features to select.
             strict:
@@ -303,16 +306,17 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             random_state=random_state, n_jobs=n_jobs,
             conditional=conditional)
 
+        diagonal = -np.diag(mi).copy()
         if conditional:
-            # method from [2]_.
-            np.multiply(mi, -1, out=mi)
+            # method from [2]_ with another tuning dial.
+            # mutpliypling off-diagonal ones with -(1-alpha)
+            np.multiply(mi, -(1-alpha), out=mi)
         else:
             # method from [1]_.
-            # mutpliypling off-diagonal ones with -1
-            diagonal = -np.diag(mi).copy()
             # mutpliypling off-diagonal ones with 1-alpha
-            np.multiply(mi, (1-alpha), out=mi)
-            np.fill_diagonal(mi, diagonal)
+            np.multiply(mi, 1-alpha, out=mi)
+        # keeping the diagonal
+        np.fill_diagonal(mi, diagonal)
 
         it = np.nditer(mi, flags=['multi_index'], op_flags=[['readonly']])
         cqm.set_objective((*it.multi_index, x) for x in it if x)
