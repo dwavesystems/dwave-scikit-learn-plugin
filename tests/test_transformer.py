@@ -16,29 +16,30 @@ import unittest
 import unittest.mock
 import warnings
 
-import dimod
 import numpy as np
 
+from dwave.optimization import Model
 from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
-from dwave.system import LeapHybridCQMSampler
+from dwave.system import LeapHybridNLSampler
 from sklearn.datasets import load_iris
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 
-from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
+from dwave.plugins.sklearn.transformers import SelectFromNonlinearModel
 
 
-class MockCQM(dimod.ExactCQMSolver):
-    def sample_cqm(self, cqm: dimod.CQM, *, time_limit: float, label: str) -> dimod.SampleSet:
-        return super().sample_cqm(cqm)
+class MockNL():
+    def sample(self, NL: Model, *, time_limit: float, label: str):
+        sampler = LeapHybridNLSampler()
+        return sampler.sample(NL)
 
-    def min_time_limit(self, cqm):
+    def min_time_limit(self, NL):
         return 1
 
 
-@unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridCQMSampler", MockCQM)
-class TestSelectFromQuadraticModel(unittest.TestCase):
+@unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridNLSampler", MockNL)
+class TestSelectFromNonlinearModel(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         rng = np.random.default_rng(138984)
@@ -46,18 +47,18 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         cls.y = np.asarray(rng.uniform(0, 1, size=100) > 0.5, dtype=int)
 
     def test_init_good(self):
-        a = SelectFromQuadraticModel()
+        a = SelectFromNonlinearModel()
 
-        b = SelectFromQuadraticModel(alpha=0.1)
+        b = SelectFromNonlinearModel(alpha=0.1)
 
-        c = SelectFromQuadraticModel(alpha=0.1, time_limit=30)
+        c = SelectFromNonlinearModel(alpha=0.1, time_limit=30)
 
-        d = SelectFromQuadraticModel(time_limit=15)
+        d = SelectFromNonlinearModel(time_limit=15)
 
-        self.assertIsInstance(a, SelectFromQuadraticModel)
-        self.assertIsInstance(b, SelectFromQuadraticModel)
-        self.assertIsInstance(c, SelectFromQuadraticModel)
-        self.assertIsInstance(d, SelectFromQuadraticModel)
+        self.assertIsInstance(a, SelectFromNonlinearModel)
+        self.assertIsInstance(b, SelectFromNonlinearModel)
+        self.assertIsInstance(c, SelectFromNonlinearModel)
+        self.assertIsInstance(d, SelectFromNonlinearModel)
 
         self.assertEqual(a.alpha, 0.5)
         self.assertEqual(b.alpha, 0.1)
@@ -70,15 +71,15 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         self.assertEqual(d.time_limit, 15)
 
         self.assertIsInstance(
-            SelectFromQuadraticModel(alpha=0), SelectFromQuadraticModel
+            SelectFromNonlinearModel(alpha=0), SelectFromNonlinearModel
         )
-
+    
     def test_init_bad(self):
-        self.assertRaises(ValueError, SelectFromQuadraticModel, alpha=-10)
-        self.assertRaises(ValueError, SelectFromQuadraticModel, alpha=10)
+        self.assertRaises(ValueError, SelectFromNonlinearModel, alpha=-10)
+        self.assertRaises(ValueError, SelectFromNonlinearModel, alpha=10)
 
     def test_fit(self):
-        selector = SelectFromQuadraticModel(num_features=7)
+        selector = SelectFromNonlinearModel(num_features=7)
 
         # test default numpy
 
@@ -99,9 +100,9 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
             self.X[:, selector._mask]
         except Exception as e:
             self.fail(e)
-
+    
     def test_fit_transform(self):
-        selector = SelectFromQuadraticModel(num_features=7)
+        selector = SelectFromNonlinearModel(num_features=7)
 
         # test numpy without fit
         x = selector.fit_transform(self.X, self.y, num_features=5)
@@ -115,17 +116,17 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         X, y = load_iris(return_X_y=True)
 
         clf = Pipeline([
-          ('feature_selection', SelectFromQuadraticModel(num_features=2)),
+          ('feature_selection', SelectFromNonlinearModel(num_features=2)),
           ('classification', RandomForestClassifier())
         ])
         clf.fit(X, y)
 
         clf.predict(X)
-
+    
     def test_alpha_0(self):
-        cqm = SelectFromQuadraticModel.correlation_cqm(self.X, self.y, num_features=3, alpha=0)
-        self.assertTrue(not any(cqm.objective.linear.values()))
-
+        NL, X_binary = SelectFromNonlinearModel.correlation_nl(self.X, self.y, num_features=3, alpha=0)
+        self.assertNotIn('x[1]', str(NL.objective))
+    
     def test_alpha_1(self):
         rng = np.random.default_rng(42)
 
@@ -135,7 +136,7 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         X = rng.uniform(size=(1000, 10))
         X[:, 0] = X[:, 1] = X[:, 2] = y
 
-        selector = SelectFromQuadraticModel(num_features=3, alpha=1).fit(X, y)
+        selector = SelectFromNonlinearModel(num_features=3, alpha=1).fit(X, y)
 
         # with alpha=1, we should see that only the quality matters, so the
         # first three should be selected despite being perfectly correlated
@@ -144,10 +145,10 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
 
     def test_xy_shape(self):
         with self.assertRaises(ValueError):
-            SelectFromQuadraticModel(num_features=1).fit([[0, 1]], [1, 2])
+            SelectFromNonlinearModel(num_features=1).fit([[0, 1]], [1, 2])
 
     def test_repr(self):
-        repr(SelectFromQuadraticModel())
+        repr(SelectFromNonlinearModel())
 
     def test_gridsearch(self):
         rng = np.random.default_rng(42)
@@ -155,7 +156,7 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         y = np.asarray(rng.uniform(0, 1, size=100) > 0.5, dtype=int)
 
         pipe = Pipeline([
-          ('feature_selection', SelectFromQuadraticModel(num_features=2)),
+          ('feature_selection', SelectFromNonlinearModel(num_features=2)),
           ('classification', RandomForestClassifier())
         ])
 
@@ -170,8 +171,8 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         y = [1]
 
         with self.assertRaises(ValueError):
-            SelectFromQuadraticModel(num_features=2).fit(X, y)
-
+            SelectFromNonlinearModel(num_features=2).fit(X, y)
+    
     def test_fixed_column(self):
         X = np.copy(self.X)
 
@@ -179,22 +180,22 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         X[:, 1] = 0
         X[:, 5] = 1
 
-        cqm = SelectFromQuadraticModel.correlation_cqm(X, self.y, alpha=.5, num_features=5)
+        NL, X_binary = SelectFromNonlinearModel.correlation_nl(X, self.y, alpha=.5, num_features=5)
 
-        # in this case the linear bias for those two columns should be 0
-        self.assertEqual(cqm.objective.linear[1], 0)
-        self.assertEqual(cqm.objective.linear[5], 0)
+        # Convert the objective expression to a string for symbol inspection
+        objective_str = str(NL.objective)
 
-        # as should the quadratic biases
-        self.assertEqual(cqm.objective.degree(1), 0)
-        self.assertEqual(cqm.objective.degree(5), 0)
-
+        # Check that the variables corresponding to constant columns are not present
+        for col in [1, 5]:
+            var_name = str(X_binary[col])
+            self.assertNotIn(var_name, objective_str, msg=f"Constant column {col} still appears in objective.")
+    
 
 class TestIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         try:
-            LeapHybridCQMSampler()
+            LeapHybridNLSampler()
         except (ConfigFileError, SolverAuthenticationError, ValueError):
             raise unittest.SkipTest("no hybrid solver available")
 
@@ -202,7 +203,7 @@ class TestIntegration(unittest.TestCase):
         X, y = load_iris(return_X_y=True)
 
         clf = Pipeline([
-          ('feature_selection', SelectFromQuadraticModel(num_features=2)),
+          ('feature_selection', SelectFromNonlinearModel(num_features=2)),
           ('classification', RandomForestClassifier())
         ])
         clf.fit(X, y)

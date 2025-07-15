@@ -1,4 +1,4 @@
-dimod==0.12.3
+dwave-optimization==0.6.0
 dwave-system==1.18.0
 
 numpy==1.20.0; python_version<"3.10.0"  # oldest supported by dwave-system
