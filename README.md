@@ -13,7 +13,7 @@ Those seeking a more collaborative approach and assistance with building a produ
 reach out to D-Wave [directly](https://www.dwavesys.com/solutions-and-products/professional-services/) and also explore the feature selection [offering](https://aws.amazon.com/marketplace/pp/prodview-bsrc3yuwgjbo4) in AWS Marketplace.
 
 The package's main class, `SelectFromNonlinearModel`, can be used in any existing `sklearn` pipeline.
-For an introduction to hybrid methods for feature selection, see the [Feature Selection for Nonlinear Models](https://github.com/dwave-examples/feature-selection-cqm).
+For an introduction to hybrid methods for feature selection, see the [Feature Selection for Nonlinear](https://github.com/dwave-examples/feature-selection-cqm).
 
 ## Examples
 
