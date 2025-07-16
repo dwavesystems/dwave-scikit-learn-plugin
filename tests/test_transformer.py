@@ -73,7 +73,7 @@ class TestSelectFromNonlinearModel(unittest.TestCase):
         self.assertIsInstance(
             SelectFromNonlinearModel(alpha=0), SelectFromNonlinearModel
         )
-    
+
     def test_init_bad(self):
         self.assertRaises(ValueError, SelectFromNonlinearModel, alpha=-10)
         self.assertRaises(ValueError, SelectFromNonlinearModel, alpha=10)
@@ -124,8 +124,8 @@ class TestSelectFromNonlinearModel(unittest.TestCase):
         clf.predict(X)
     
     def test_alpha_0(self):
-        NL, X_binary = SelectFromNonlinearModel.correlation_nl(self.X, self.y, num_features=3, alpha=0)
-        self.assertNotIn('x[1]', str(NL.objective))
+        NL, _, linear = SelectFromNonlinearModel.correlation_nl(self.X, self.y, num_features=3, alpha=0)
+        self.assertTrue(np.allclose(linear, 0))
     
     def test_alpha_1(self):
         rng = np.random.default_rng(42)
