@@ -23,6 +23,7 @@ import warnings
 import numpy as np
 import numpy.typing as npt
 
+from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
 from dwave.system import LeapHybridNLSampler
 from dwave.optimization import Model
 
@@ -118,7 +119,7 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
         alpha: float,
         num_features: int,
         strict: bool = True,
-    ) -> tuple[Model, Model.binary()]: 
+    ) -> tuple[Model, Model.binary(), np.array()]: 
         """Build a nonlinear model for feature selection.
 
         This method is based on maximizing influence and feature independence as
@@ -145,7 +146,7 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
                 is ``<=`` rather than ``==``.
 
         Returns:
-            A Nonlinear model and the binary list.
+            A nonlinear model and the binary list.
 
         .. [Milne et al.] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
             Selection in Credit Scoring and Classification Using a Quantum Annealer."
@@ -205,30 +206,26 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
             # the original formulation from Milne et al.
             # initialize model, create binary list, make constant
             NL = Model()
-            Total_Num_Features=X.shape[1]
+            total_num_features=X.shape[1]
             
             
-            X_binary = NL.binary(Total_Num_Features) 
-            Num_features = NL.constant(num_features)
+            X_binary = NL.binary(total_num_features) 
+            var_features = NL.constant(num_features)
             feat_corr = correlations[:-1,:-1]
             
+            # take last element in every row
             label_corr = np.array(correlations[:-1,-1])
-            #print(type(label_corr))
+
             # Make a constant node in order to splice and use in objective
             NL_corr = NL.constant(feat_corr)
 
-            # take last element in every row
-            #target = np.array([row[-1] for row in correlations])
-
             # extract upper triangle, excluding diagonal. Flatten into 1D array
             C = np.triu(NL_corr, k=1).flatten()
-            #print(C)
-            #num_rows = X.shape[1] + 1
 
             # generate all column and row indices
-            quad_col = np.tile(np.arange(Total_Num_Features), Total_Num_Features)
-            quad_row = np.tile(np.arange(Total_Num_Features), 
-                        (Total_Num_Features,1)).flatten('F')
+            quad_col = np.tile(np.arange(total_num_features), total_num_features)
+            quad_row = np.tile(np.arange(total_num_features), 
+                        (total_num_features,1)).flatten('F')
 
             # extract indices where correlation value not equal to zero
             
@@ -242,22 +239,21 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
 
             # 1D numpy array initialized to size of num_rows with 0 in every position
             linear = np.zeros(len(feat_corr[0]))
-            
+            expected_linear = np.zeros(len(feat_corr[0]))
+
             # numpy will automatically go element-by-element in the arrays
             linear += NL.constant(-1.0 * label_corr * alpha * num_features)
-            #print(linear)
+            expected_linear += (-1.0 * label_corr * alpha * num_features)
+
             # if must choose exact number of desired features
             if strict:
-                NL.add_constraint(X_binary.sum() == Num_features)
+                NL.add_constraint(X_binary.sum() == var_features)
             else:
-                NL.add_constraint(X_binary.sum() <= Num_features)
+                NL.add_constraint(X_binary.sum() <= var_features)
 
-            #NL.add_constraint(X_binary[-1] == NL.constant(False))
-            # minimize
-            #   Sigma[i] Sigma[j] (2 * C[i,j] * X_binary[i] * X_binary[j]) + Sigma(-2 * alpha * num_features * C[i, -1] * X_binary[i])
             NL.minimize(NL.constant(2.0) * NL.quadratic_model(X_binary, quadratic=(q3, [q1, q2]), linear=linear))
             
-        return NL, X_binary
+        return NL, X_binary, expected_linear
 
     def fit(
         self,
@@ -314,7 +310,7 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
             return self
         
         if self.method == "correlation":
-            NL, X_binary = self.correlation_nl(X, y, num_features=num_features, alpha=alpha)
+            NL, X_binary, _ = self.correlation_nl(X, y, num_features=num_features, alpha=alpha)
 
         else:
             raise ValueError(f"only methods {self.acceptable_methods} are implemented")
@@ -337,14 +333,9 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
         # Example Given (e.g.) of 6 features to choose 3
         with NL.lock():
             selected = X_binary.state(0) # e.g. [0,1,0,0,1,1,0]
-            index = [i for i, val in enumerate(selected) if val == 1] # e.g. [1,4,5]
             NL.unlock()
-                    
-        # initialize similar to linear
-        # for each index that was chosen, turn into bool
-        mask = np.zeros(X.shape[1], dtype=bool)
-        mask[index] = True # e.g. [False, True, False, False, True, True, False]
-        
+
+        mask = np.asarray(selected, dtype=bool) # e.g. [False, True, False, False, True, True, False]
         self._mask = mask
 
         return self
