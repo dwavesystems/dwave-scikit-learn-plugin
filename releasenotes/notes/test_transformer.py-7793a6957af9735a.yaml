@@ -1,0 +1,8 @@
+---
+issues:
+  - |
+    ResourceWarnings occur on some tests. Some tests run several times, but RessourceWarnings only occur on some of the runs. 
+upgrade:
+  - |
+    Updated to test the nonlinear version of transformers.py
+
