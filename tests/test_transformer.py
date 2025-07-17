@@ -180,7 +180,7 @@ class TestSelectFromNonlinearModel(unittest.TestCase):
         X[:, 1] = 0
         X[:, 5] = 1
 
-        NL, X_binary = SelectFromNonlinearModel.correlation_nl(X, self.y, alpha=.5, num_features=5)
+        NL, X_binary, _ = SelectFromNonlinearModel.correlation_nl(X, self.y, alpha=.5, num_features=5)
 
         # Convert the objective expression to a string for symbol inspection
         objective_str = str(NL.objective)

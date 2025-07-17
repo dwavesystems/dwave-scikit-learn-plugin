@@ -2,6 +2,9 @@
 issues:
   - |
     ResourceWarnings occur on some tests. Some tests run several times, but RessourceWarnings only occur on some of the runs. 
+    "/usr/lib/python3.11/concurrent/futures/thread.py:85: ResourceWarning: unclosed file <_io.BufferedRandom name=8>
+    del work_item
+    ResourceWarning: Enable tracemalloc to get the object allocation traceback"
 upgrade:
   - |
     Updated to test the nonlinear version of transformers.py
