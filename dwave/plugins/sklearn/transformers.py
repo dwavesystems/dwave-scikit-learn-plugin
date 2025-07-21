@@ -20,10 +20,12 @@ import tempfile
 import typing
 import warnings
 
+import dimod
 import numpy as np
 import numpy.typing as npt
 
 from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
+from dwave.system import LeapHybridCQMSampler
 from dwave.system import LeapHybridNLSampler
 from dwave.optimization import Model
 
@@ -33,10 +35,10 @@ from sklearn.utils.validation import check_is_fitted
 
 from dwave.plugins.sklearn.utilities import corrcoef
 
-__all__ = ["SelectFromNonlinearModel"]
+__all__ = ["SelectFromQuadraticModel"]
 
 
-class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
+class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
     """Select features using a quadratic optimization problem solved on a hybrid solver.
 
     Args:
@@ -68,6 +70,7 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
         method: str = "correlation",  # undocumented until there is another supported
         num_features: int = 10,
         time_limit: typing.Optional[float] = None,
+        solver: str = "cqm"
     ):
         if not 0 <= alpha <= 1:
             raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
@@ -84,6 +87,7 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
         self.method = method
         self.num_features = num_features
         self.time_limit = time_limit  # check this lazily
+        self.solver = solver
 
     def __sklearn_is_fitted__(self) -> bool:
         # used by `check_is_fitted()`
@@ -111,16 +115,163 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
         except AttributeError:
             raise RuntimeError("fit hasn't been run yet")
 
+    def _create_cqm_model(
+        *, 
+        correlations: np.memmap, 
+        X: npt.ArrayLike, 
+        alpha: float, 
+        num_features: int, 
+        strict: bool, 
+    ) -> dimod.ConstrainedQuadraticModel:
+        """Build a constrained quadratic model (CQM) for feature selection.
+
+        This method is based on maximizing influence and feature independence as
+        measured by correlation [Milne et al.]_.
+
+        Args:
+            correlations:
+                Correlation matrix of features
+            X:
+                Feature vectors formatted as a numerical 2D array-like.
+            alpha:
+                Hyperparameter between 0 and 1 that controls the relative weight of
+                the relevance and redundancy terms.
+                ``alpha=0`` places no weight on the quality of the features,
+                therefore the features will be selected as to minimize the
+                redundancy without any consideration to quality.
+                ``alpha=1`` places the maximum weight on the quality of the features,
+                and therefore will be equivalent to using
+                :class:`sklearn.feature_selection.SelectKBest`.
+            num_features:
+                The number of features to select.
+            strict:
+                If ``False`` the constraint on the number of selected features
+                is ``<=`` rather than ``==``.
+
+        Returns:
+            A constrained quadratic model (CQM)
+        """
+
+        # our objective
+        # we multiply by 2 because the matrix is symmetric
+        np.fill_diagonal(correlations, correlations[:, -1] * (-2 * alpha * num_features))
+    
+        cqm = dimod.ConstrainedQuadraticModel()
+        cqm.add_variables(dimod.BINARY, X.shape[1])
+
+        # add the k-hot constraint
+        cqm.add_constraint(
+            ((v, 1) for v in cqm.variables),
+            '==' if strict else '<=',
+            num_features,
+            label=f"{num_features}-hot",
+            )
+
+        # Note: the full symmetric matrix (with both upper- and lower-diagonal
+        # entries for each correlation coefficient) is retained for consistency with
+        # the original formulation from Milne et al.
+        it = np.nditer(correlations[:-1, :-1], flags=['multi_index'], op_flags=[['readonly']])
+        cqm.set_objective((*it.multi_index, x) for x in it if x)
+
+        return cqm
+
+    def _create_nl_model(
+        *, 
+        correlations: np.memmap, 
+        X: npt.ArrayLike, 
+        alpha: float, 
+        num_features: int,
+        strict: bool, 
+    ) -> tuple[Model, list, np.ndarray]:
+        """Build a nonlinear (NL) model for feature selection.
+
+        This method is based on maximizing influence and feature independence as
+        measured by correlation [Milne et al.]_.
+
+        Args:
+            correlations:
+                Correlation matrix of features
+            X:
+                Feature vectors formatted as a numerical 2D array-like.
+            alpha:
+                Hyperparameter between 0 and 1 that controls the relative weight of
+                the relevance and redundancy terms.
+                ``alpha=0`` places no weight on the quality of the features,
+                therefore the features will be selected as to minimize the
+                redundancy without any consideration to quality.
+                ``alpha=1`` places the maximum weight on the quality of the features,
+                and therefore will be equivalent to using
+                :class:`sklearn.feature_selection.SelectKBest`.
+            num_features:
+                The number of features to select.
+            strict:
+                If ``False`` the constraint on the number of selected features
+                is ``<=`` rather than ``==``.
+
+        Returns:
+            A nonlinear model, the binary list, and a ndarray
+        """
+
+        # initialize model, create binary list, make constant
+        NL = Model()
+        total_num_features=X.shape[1]
+            
+        X_binary = NL.binary(total_num_features) 
+        var_features = NL.constant(num_features)
+        feat_corr = correlations[:-1,:-1]
+            
+        # take last element in every row
+        label_corr = np.array(correlations[:-1,-1])
+
+        # Make a constant node in order to splice and use in objective
+        NL_corr = NL.constant(feat_corr)
+
+        # extract upper triangle, excluding diagonal. Flatten into 1D array
+        C = np.triu(NL_corr, k=1).flatten()
+
+        # generate all column and row indices
+        quad_col = np.tile(np.arange(total_num_features), total_num_features)
+        quad_row = np.tile(np.arange(total_num_features), 
+                    (total_num_features,1)).flatten('F')
+
+        # extract indices where correlation value not equal to zero
+            
+        # j index
+        q2 = quad_col[C != 0]
+        # i index
+        q1 = quad_row[C != 0]
+
+        # extract values at position (i,j) where not equal to zero
+        q3 = C[C != 0]
+
+        # 1D numpy array initialized to size of num_rows with 0 in every position
+        linear = np.zeros(len(feat_corr[0]))
+        expected_linear = np.zeros(len(feat_corr[0]))
+
+        # numpy will automatically go element-by-element in the arrays
+        linear += NL.constant(-1.0 * label_corr * alpha * num_features)
+        expected_linear += (-1.0 * label_corr * alpha * num_features)
+
+        # if must choose exact number of desired features
+        if strict:
+            NL.add_constraint(X_binary.sum() == var_features)
+        else:
+            NL.add_constraint(X_binary.sum() <= var_features)
+
+        NL.minimize(NL.constant(2.0) * NL.quadratic_model(X_binary, quadratic=(q3, [q1, q2]), linear=linear))
+        return NL, X_binary, expected_linear
+
     @staticmethod
-    def correlation_nl(
+    def correlation(
         X: npt.ArrayLike,
         y: npt.ArrayLike,
         *,
         alpha: float,
         num_features: int,
         strict: bool = True,
-    ) -> tuple[Model, Model.binary(), np.array()]: 
-        """Build a nonlinear model for feature selection.
+        solver: str,
+    ) -> dimod.ConstrainedQuadraticModel | tuple[Model, list, np.array]: 
+        """Build a model for feature selection.
 
         This method is based on maximizing influence and feature independence as
         measured by correlation [Milne et al.]_.
@@ -144,9 +295,12 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
             strict:
                 If ``False`` the constraint on the number of selected features
                 is ``<=`` rather than ``==``.
+            solver:
+                String dictating whether to use the CQM or NL model creation method
 
         Returns:
-            A nonlinear model and the binary list.
+            A constrained quadratic model
+            OR a nonlinear model, the binary list, and a ndarray
 
         .. [Milne et al.] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
             Selection in Credit Scoring and Classification Using a Quantum Annealer."
@@ -204,56 +358,13 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
             # Note: the full symmetric matrix (with both upper- and lower-diagonal
             # entries for each correlation coefficient) is retained for consistency with
             # the original formulation from Milne et al.
-            # initialize model, create binary list, make constant
-            NL = Model()
-            total_num_features=X.shape[1]
-            
-            
-            X_binary = NL.binary(total_num_features) 
-            var_features = NL.constant(num_features)
-            feat_corr = correlations[:-1,:-1]
-            
-            # take last element in every row
-            label_corr = np.array(correlations[:-1,-1])
-
-            # Make a constant node in order to splice and use in objective
-            NL_corr = NL.constant(feat_corr)
-
-            # extract upper triangle, excluding diagonal. Flatten into 1D array
-            C = np.triu(NL_corr, k=1).flatten()
-
-            # generate all column and row indices
-            quad_col = np.tile(np.arange(total_num_features), total_num_features)
-            quad_row = np.tile(np.arange(total_num_features), 
-                        (total_num_features,1)).flatten('F')
-
-            # extract indices where correlation value not equal to zero
-            
-            # j index
-            q2 = quad_col[C != 0]
-            # i index
-            q1 = quad_row[C != 0]
-
-            # extract values at position (i,j) where not equal to zero
-            q3 = C[C != 0]
-
-            # 1D numpy array initialized to size of num_rows with 0 in every position
-            linear = np.zeros(len(feat_corr[0]))
-            expected_linear = np.zeros(len(feat_corr[0]))
-
-            # numpy will automatically go element-by-element in the arrays
-            linear += NL.constant(-1.0 * label_corr * alpha * num_features)
-            expected_linear += (-1.0 * label_corr * alpha * num_features)
-
-            # if must choose exact number of desired features
-            if strict:
-                NL.add_constraint(X_binary.sum() == var_features)
+            if (solver == "cqm"):
+                return SelectFromQuadraticModel._create_cqm_model(correlations=correlations, X=X, alpha=alpha, num_features=num_features, strict=strict)
+            elif (solver == "nl"):
+                return SelectFromQuadraticModel._create_nl_model(correlations=correlations, X=X, alpha=alpha, num_features=num_features, strict=strict)
             else:
-                NL.add_constraint(X_binary.sum() <= var_features)
-
-            NL.minimize(NL.constant(2.0) * NL.quadratic_model(X_binary, quadratic=(q3, [q1, q2]), linear=linear))
-            
-        return NL, X_binary, expected_linear
+                print("Unknown Solver Selected")
+                return -1
 
     def fit(
         self,
@@ -263,7 +374,8 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
         alpha: typing.Optional[float] = None,
         num_features: typing.Optional[int] = None,
         time_limit: typing.Optional[float] = None,
-    ) -> SelectFromNonlinearModel:
+        solver: typing.Optional[str] = None,
+    ) -> SelectFromQuadraticModel:
         """Select the features to keep.
 
         Args:
@@ -288,7 +400,7 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
                 Defaults to the value provided to the constructor.
 
         Returns:
-            This instance of `SelectFromNonlinearModel`.
+            This instance of `SelectFromQuadraticModel`.
         """
         X = np.atleast_2d(np.asarray(X))
         if X.ndim != 2:
@@ -304,19 +416,54 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
             num_features = self.num_features
         # num_features is checked by the correlation method function
 
+        if solver is None:
+            solver = self.solver
+
         # if we already have fewer features than requested, just return
         if num_features >= X.shape[1]:
             self._mask = np.ones(X.shape[1], dtype=bool)
             return self
         
         if self.method == "correlation":
-            NL, X_binary, _ = self.correlation_nl(X, y, num_features=num_features, alpha=alpha)
+            if solver == "cqm":
+                cqm = self.correlation(X, y, num_features=num_features, alpha=alpha, solver=solver)
+            elif solver == "nl":
+                NL, X_binary, _ = self.correlation(X, y, num_features=num_features, alpha=alpha, solver=solver)
 
         else:
             raise ValueError(f"only methods {self.acceptable_methods} are implemented")
 
         try:
-            sampler = LeapHybridNLSampler()
+            if solver == "cqm":
+                sampler = LeapHybridCQMSampler()
+                sampleset = sampler.sample_cqm(cqm, time_limit=self.time_limit,
+                                           label=f"{self.__module__}.{type(self).__qualname__}")
+
+                filtered = sampleset.filter(lambda d: d.is_feasible)
+
+                if len(filtered) == 0:
+                    raise RuntimeError("no feasible solutions found by the hybrid solver")
+
+                lowest = filtered.first.sample
+
+                self._mask = np.fromiter((lowest[v] for v in cqm.variables),
+                                         count=cqm.num_variables(), dtype=bool)
+
+            elif solver == "nl":
+                sampler = LeapHybridNLSampler()
+
+                # time_limit is checked by the LeapHybridNLSampler
+                sampler.sample(NL, time_limit=self.time_limit, label='NL Plug-IN')
+
+                # Get the index position of chosen features
+                # Example Given (e.g.) of 6 features to choose 3
+                with NL.lock():
+                    selected = X_binary.state(0) # e.g. [0,1,0,0,1,1,0]
+                    NL.unlock()
+
+                mask = np.asarray(selected, dtype=bool) # e.g. [False, True, False, False, True, True, False]
+                self._mask = mask
+
         except (ConfigFileError, SolverAuthenticationError) as e:
             raise RuntimeError(
                 f"""Instantiation of a Leap hybrid solver failed with an {e} error.
@@ -325,19 +472,7 @@ class SelectFromNonlinearModel(SelectorMixin, BaseEstimator):
                 access to Leap’s solvers.
                 """
             )
-
-        # time_limit is checked by the LeapHybridNLSampler
-        sampler.sample(NL, time_limit=self.time_limit, label='NL Plug-IN')
-        
-        # Get the index position of chosen features
-        # Example Given (e.g.) of 6 features to choose 3
-        with NL.lock():
-            selected = X_binary.state(0) # e.g. [0,1,0,0,1,1,0]
-            NL.unlock()
-
-        mask = np.asarray(selected, dtype=bool) # e.g. [False, True, False, False, True, True, False]
-        self._mask = mask
-
+    
         return self
 
     def unfit(self):
