@@ -34,8 +34,8 @@ A minimal example of using the plugin to select 20 of 30 features of an `sklearn
 (569, 20)
 ```
 
-For large problems, the default runtime may be insufficient. You can use the CQM solver's [`min_time_limit`](https://docs.ocean.dwavesys.com/en/stable/docs_system/reference/generated/dwave.system.samplers.LeapHybridCQMSampler.min_time_limit.html) or nonlinear (NL) solver's 
-[`time_limit`](https://docs.ocean.dwavesys.com/en/stable/docs_system/reference/generated/dwave.system.samplers.LeapHybridCQMSampler.min_time_limit.html)
+For large problems, the default runtime may be insufficient. You can use the CQM solver's [`time_limit`](https://docs.dwavequantum.com/en/latest/industrial_optimization/solver_cqm_parameters.html#time-limit) or Nonlinear (NL) solver's
+[`time_limit`](https://docs.dwavequantum.com/en/latest/industrial_optimization/solver_nl_parameters.html#time-limit)
 method to find the minimum accepted runtime for your problem; alternatively, simply submit as above 
 and check the returned error message for the required runtime. 
 
