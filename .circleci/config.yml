@@ -41,7 +41,6 @@ jobs:
             pip install -r requirements.txt
             pip install -r tests/requirements.txt
             pip install wheel twine
-            pip install parameterized
 
       - save_cache: &save-cache-env
           key: v<< pipeline.parameters.cache-generation >>-pip-{{ checksum "requirements.txt" }}-{{ checksum "tests/requirements.txt" }}-{{ .Environment.CIRCLE_JOB }}
@@ -161,7 +160,6 @@ jobs:
             env\Scripts\activate.ps1
             pip install -U pip
             pip install -r requirements.txt -r tests\requirements.txt
-            pip install parameterized
 
       - run:
           name: Install package
@@ -209,7 +207,7 @@ workflows:
             parameters:
               python-version: &python-versions [3.9.2, 3.10.0, 3.11.0, 3.12.0, 3.13.0]
               pip-constraints:
-                - "scikit-learn==1.6.0"  # lowest supported by package
+                - "scikit-learn==1.6.1"  # lowest supported by package
                 # - "scikit-learn~=1.0.0"  # 1.0.2 is the highest in ~=1.0.0
                 - "scikit-learn~=1.6"
                 - "scikit-learn~=1.6"  # latest in current minor as of March 2023
