@@ -25,8 +25,7 @@ import numpy as np
 import numpy.typing as npt
 
 from dwave.cloud.exceptions import ConfigFileError, SolverAuthenticationError
-from dwave.system import LeapHybridCQMSampler
-from dwave.system import LeapHybridNLSampler
+from dwave.system import LeapHybridCQMSampler, LeapHybridNLSampler
 from dwave.optimization import Model
 
 from sklearn.base import BaseEstimator
@@ -114,8 +113,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         except AttributeError:
             raise RuntimeError("fit hasn't been run yet")
 
+    @staticmethod
     def _create_cqm_model(
-        *, 
         correlations: np.memmap, 
         X: npt.ArrayLike, 
         alpha: float, 
@@ -174,14 +173,14 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         return cqm
 
+    @staticmethod
     def _create_nl_model(
-        *, 
         correlations: np.memmap, 
         X: npt.ArrayLike, 
         alpha: float, 
         num_features: int,
         strict: bool, 
-    ) -> tuple[Model, list, np.ndarray]:
+    ) -> Model:
         """Build a nonlinear (NL) model for feature selection.
 
         This method is based on maximizing influence and feature independence as
@@ -245,11 +244,9 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
         # 1D numpy array initialized to size of num_rows with 0 in every position
         linear = np.zeros(len(feat_corr[0]))
-        expected_linear = np.zeros(len(feat_corr[0]))
 
         # numpy will automatically go element-by-element in the arrays
         linear += nl.constant(-1.0 * label_corr * alpha * num_features)
-        expected_linear += (-1.0 * label_corr * alpha * num_features)
 
         # if must choose exact number of desired features
         if strict:
@@ -258,7 +255,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             nl.add_constraint(x_binary.sum() <= var_features)
 
         nl.minimize(nl.constant(2.0) * nl.quadratic_model(x_binary, quadratic=(q3, [q1, q2]), linear=linear))
-        return nl, x_binary, expected_linear
+        return nl
 
     @staticmethod
     def correlation(
@@ -269,7 +266,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         num_features: int,
         strict: bool = True,
         solver: str,
-    ) -> dimod.ConstrainedQuadraticModel | tuple[Model, list, np.array]:
+    ) -> Union[dimod.ConstrainedQuadraticModel, Model]:
         """Build a model for feature selection.
 
         This method is based on maximizing influence and feature independence as
@@ -354,8 +351,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 return SelectFromQuadraticModel._create_cqm_model(correlations=correlations, X=X, alpha=alpha, num_features=num_features, strict=strict)
             elif (solver == "nl"):
                 return SelectFromQuadraticModel._create_nl_model(correlations=correlations, X=X, alpha=alpha, num_features=num_features, strict=strict)
-            else:
-                raise ValueError(f"Solver parameter must be equal to 'nl' or 'cqm'. Received solver parameter: {solver}")
+            raise ValueError(f"Solver parameter must be equal to 'nl' or 'cqm'. Received solver parameter: {solver}")
 
     def fit(
         self,
@@ -416,10 +412,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
             return self
 
         if self.method == "correlation":
-            if solver == "cqm":
-                cqm = self.correlation(X, y, num_features=num_features, alpha=alpha, solver=solver)
-            elif solver == "nl":
-                nl, x_binary, _ = self.correlation(X, y, num_features=num_features, alpha=alpha, solver=solver)
+            model = self.correlation(X, y, num_features=num_features, alpha=alpha, solver=solver)
 
         else:
             raise ValueError(f"only methods {self.acceptable_methods} are implemented")
@@ -427,7 +420,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         try:
             if solver == "cqm":
                 sampler = LeapHybridCQMSampler()
-                sampleset = sampler.sample_cqm(cqm, time_limit=self.time_limit,
+                sampleset = sampler.sample_cqm(model, time_limit=self.time_limit,
                                            label=f"{self.__module__}.{type(self).__qualname__}")
 
                 filtered = sampleset.filter(lambda d: d.is_feasible)
@@ -437,20 +430,23 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
 
                 lowest = filtered.first.sample
 
-                self._mask = np.fromiter((lowest[v] for v in cqm.variables),
-                                         count=cqm.num_variables(), dtype=bool)
+                self._mask = np.fromiter((lowest[v] for v in model.variables),
+                                         count=model.num_variables(), dtype=bool)
 
             elif solver == "nl":
                 sampler = LeapHybridNLSampler()
 
                 # time_limit is checked by the LeapHybridNLSampler
-                sampler.sample(nl, time_limit=self.time_limit, label='scikit-learn Plug-In: NL')
+                sampler.sample(model, time_limit=self.time_limit, label='scikit-learn Plug-In: NL')
 
                 # Get the index position of chosen features
                 # Example Given (e.g.) of 6 features to choose 3
-                with nl.lock():
-                    selected = x_binary.state(0) # e.g. [0,1,0,0,1,1,0]
-                    nl.unlock()
+                with model.lock():
+                    for dec_index in range(num_features):
+                        decision_values = [sym.state(dec_index) for sym in model.iter_decisions()]
+                        selected = decision_values[0]
+                        break
+                    model.unlock()
 
                 mask = np.asarray(selected, dtype=bool) # e.g. [False, True, False, False, True, True, False]
                 self._mask = mask
