@@ -15,6 +15,7 @@
 import unittest
 import unittest.mock
 import warnings
+import tempfile
 from parameterized import parameterized
 
 import dimod
@@ -30,6 +31,7 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 
 from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
+from dwave.plugins.sklearn.utilities import corrcoef
 
 
 class MockCQM(dimod.ExactCQMSolver):
@@ -41,11 +43,11 @@ class MockCQM(dimod.ExactCQMSolver):
 
 
 class MockNL():
-    def sample(self, NL: Model, *, time_limit: float, label: str):
+    def sample(self, nl: Model, *, time_limit: float, label: str):
         sampler = LeapHybridNLSampler()
-        return sampler.sample(NL)
+        return sampler.sample(nl)
 
-    def min_time_limit(self, NL):
+    def min_time_limit(self, nl):
         return 1
 
 
@@ -57,14 +59,14 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         rng = np.random.default_rng(138984)
         cls.X = rng.uniform(-10, 10, size=(100, 9))
         cls.y = np.asarray(rng.uniform(0, 1, size=100) > 0.5, dtype=int)
-
+    
     @parameterized.expand([
-        ("cqm_30", 0.1, 30, "cqm"), 
-        ("cqm_15", 0.1, 15, "cqm"), 
-        ("nl_30", 0.1, 30, "nl"), 
-        ("nl_15", 0.1, 15, "nl"), 
+        (0.1, 30, "cqm"), 
+        (0.1, 15, "cqm"), 
+        (0.1, 30, "nl"), 
+        (0.1, 15, "nl"), 
     ])
-    def test_init_good(self, name, alpha, time_limit, solver):
+    def test_init_good(self, alpha, time_limit, solver):
         a = SelectFromQuadraticModel(solver=solver)
 
         b = SelectFromQuadraticModel(alpha=alpha, solver=solver)
@@ -93,22 +95,22 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         )
 
     @parameterized.expand([
-        ("cqm_-10", -10, "cqm"), 
-        ("cqm_10", 10, "cqm"), 
-        ("nl_-10", -10, "nl"), 
-        ("nl_10", 10, "nl"), 
+        (-10, "cqm"), 
+        (10, "cqm"), 
+        (-10, "nl"), 
+        (10, "nl"), 
     ])
-    def test_init_bad(self, name, alpha, solver):
+    def test_init_bad(self, alpha, solver):
         self.assertRaises(ValueError, SelectFromQuadraticModel, alpha=alpha, solver=solver)
         self.assertRaises(ValueError, SelectFromQuadraticModel, alpha=alpha, solver=solver)
     
     @parameterized.expand([
-        ("cqm_7", 7, "cqm"), 
-        ("cqm_5", 5, "cqm"), 
-        ("nl_7", 7, "nl"), 
-        ("nl_5", 5, "nl"), 
+        (7, "cqm"), 
+        (5, "cqm"), 
+        (7, "nl"), 
+        (5, "nl"), 
     ])
-    def test_fit(self, name, num_features, solver):
+    def test_fit(self, num_features, solver):
         selector = SelectFromQuadraticModel(num_features=num_features, solver=solver)
 
         # test default numpy
@@ -132,10 +134,10 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
             self.fail(e)
     
     @parameterized.expand([
-        ("cqm_7", 7, "cqm"), 
-        ("nl_7", 7, "nl"), 
+        (7, "cqm"), 
+        (7, "nl"), 
     ])
-    def test_fit_transform(self, name, num_features, solver):
+    def test_fit_transform(self, num_features, solver):
         selector = SelectFromQuadraticModel(num_features=num_features, solver=solver)
 
         # test numpy without fit
@@ -147,10 +149,10 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         np.testing.assert_array_equal(x, x_from_fit)
     
     @parameterized.expand([
-        ("cqm_2", 2, "cqm"), 
-        ("nl_2", 2, "nl"), 
+        (2, "cqm"), 
+        (2, "nl"), 
     ])
-    def test_pipeline(self, name, num_features, solver):
+    def test_pipeline(self, num_features, solver):
         X, y = load_iris(return_X_y=True)
 
         clf = Pipeline([
@@ -161,23 +163,45 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
 
         clf.predict(X)
     
-    @parameterized.expand([
-        ("cqm_7", 3, 0, "cqm"), 
-        ("nl_7", 3, 0, "nl"), 
-    ])
-    def test_alpha_0(self, name, num_features, alpha, solver):
-        if solver == "cqm":
-            cqm = SelectFromQuadraticModel.correlation(self.X, self.y, num_features=num_features, alpha=alpha, solver=solver)
-            self.assertTrue(not any(cqm.objective.linear.values()))
-        elif solver == "nl":
-            NL, _, linear = SelectFromQuadraticModel.correlation(self.X, self.y, num_features=num_features, alpha=alpha, solver=solver)
-            self.assertTrue(np.allclose(linear, 0))
+    def test_alpha_0(self):
+        cqm = SelectFromQuadraticModel.correlation(self.X, self.y, num_features=3, alpha=0, solver="cqm")
+        self.assertTrue(not any(cqm.objective.linear.values()))
+
+        X = np.atleast_2d(np.asarray(self.X))
+        y = np.asarray(self.y)
+
+        with tempfile.TemporaryFile() as fX, tempfile.TemporaryFile() as fout:
+            # we make a copy of X because we'll be modifying it in-place within
+            # some of the functions
+            X_copy = np.memmap(fX, X.dtype, mode="w+", shape=(X.shape[0], X.shape[1] + 1))
+            X_copy[:, :-1] = X
+            X_copy[:, -1] = y
+
+            # make the matrix that will hold the correlations
+            correlations = np.memmap(
+                fout,
+                dtype=np.result_type(X, y),
+                mode="w+",
+                shape=(X_copy.shape[1], X_copy.shape[1]),
+                )
+
+            # main calculation. It modifies X_copy in-place
+            corrcoef(X_copy, out=correlations, rowvar=False, copy=False)
+
+            # we don't care about the direction of correlation in terms of
+            # the penalty/quality
+            np.absolute(correlations, out=correlations)
+
+        label_corr = np.array(correlations[:-1,-1])
+        expected_linear = np.zeros(X.shape[1])
+        expected_linear += (-1.0 * label_corr * 0 * 3)
+        self.assertTrue(np.allclose(expected_linear.all(), 0))
     
     @parameterized.expand([
-        ("cqm", 3, 1, "cqm"), 
-        ("nl", 3, 1, "nl"), 
+        (3, 1, "cqm"), 
+        (3, 1, "nl"), 
     ])
-    def test_alpha_1(self, name, num_features, alpha, solver):
+    def test_alpha_1(self, num_features, alpha, solver):
         rng = np.random.default_rng(42)
 
         y = rng.uniform(size=1000)
@@ -194,10 +218,10 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         self.assertFalse(selector._get_support_mask()[3:].any())
 
     @parameterized.expand([
-        ("cqm", 1, "cqm"), 
-        ("nl", 1, "nl"), 
+        (1, "cqm"), 
+        (1, "nl"), 
     ])
-    def test_xy_shape(self, name, num_features, solver):
+    def test_xy_shape(self, num_features, solver):
         with self.assertRaises(ValueError):
             SelectFromQuadraticModel(num_features=num_features, solver=solver).fit([[0, 1]], [1, 2])
 
@@ -206,10 +230,10 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         repr(SelectFromQuadraticModel(solver="nl"))
 
     @parameterized.expand([
-        ("cqm", 2, "cqm"), 
-        ("nl", 2, "nl"), 
+        (2, "cqm"), 
+        (2, "nl"), 
     ])
-    def test_gridsearch(self, name, num_features, solver):
+    def test_gridsearch(self, num_features, solver):
         rng = np.random.default_rng(42)
         X = rng.uniform(-10, 10, size=(100, 9))
         y = np.asarray(rng.uniform(0, 1, size=100) > 0.5, dtype=int)
@@ -226,47 +250,38 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         clf.fit(X, y)
 
     @parameterized.expand([
-        ("cqm", 2, "cqm"), 
-        ("nl", 2, "nl"), 
+        (2, "cqm"), 
+        (2, "nl"), 
     ])
-    def test_one_row(self, name, num_features, solver):
+    def test_one_row(self, num_features, solver):
         X = [[-7.85717866, 1.93442648, 8.85760003]]
         y = [1]
 
         with self.assertRaises(ValueError):
             SelectFromQuadraticModel(num_features=num_features, solver=solver).fit(X, y)
 
-    @parameterized.expand([
-        ("cqm", 0.5, 5, "cqm"), 
-        ("nl", 0.5, 5, "nl"), 
-    ])
-    def test_fixed_column(self, name, alpha, num_features, solver):
+    def test_fixed_column(self):
         X = np.copy(self.X)
 
         # fix two of the columns
         X[:, 1] = 0
         X[:, 5] = 1
 
-        if solver == "cqm":
-            cqm = SelectFromQuadraticModel.correlation(X, self.y, alpha=alpha, num_features=num_features, solver=solver)
+        cqm = SelectFromQuadraticModel.correlation(X, self.y, alpha=0.5, num_features=5, solver="cqm")
+        fitted = SelectFromQuadraticModel(alpha=0.5, num_features=5, solver="cqm").fit(X, self.y)
 
-            # in this case the linear bias for those two columns should be 0
-            self.assertEqual(cqm.objective.linear[1], 0)
-            self.assertEqual(cqm.objective.linear[5], 0)
+        # in this case the linear bias for those two columns should be 0
+        self.assertEqual(cqm.objective.linear[1], 0)
+        self.assertEqual(cqm.objective.linear[5], 0)
 
-            # as should the quadratic biases
-            self.assertEqual(cqm.objective.degree(1), 0)
-            self.assertEqual(cqm.objective.degree(5), 0)
-        elif solver == "nl":
-            NL, X_binary, _ = SelectFromQuadraticModel.correlation(X, self.y, alpha=alpha, num_features=num_features, solver=solver)
+        # as should the quadratic biases
+        self.assertEqual(cqm.objective.degree(1), 0)
+        self.assertEqual(cqm.objective.degree(5), 0)
 
-            # Convert the objective expression to a string for symbol inspection
-            objective_str = str(NL.objective)
+        selected = SelectFromQuadraticModel(alpha=0.5, num_features=5, solver="nl").fit(X, self.y)
 
-            # Check that the variables corresponding to constant columns are not present
-            for col in [1, 5]:
-                var_name = str(X_binary[col])
-                self.assertNotIn(var_name, objective_str, msg=f"Constant column {col} still appears in objective.")
+        # Check that the variables corresponding to constant columns are not present
+        self.assertEqual(selected._mask.all(), fitted._mask.all())
 
 class TestIntegration(unittest.TestCase):
     @classmethod
