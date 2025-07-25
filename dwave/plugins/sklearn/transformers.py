@@ -446,10 +446,8 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                         decision_values = [sym.state(dec_index) for sym in model.iter_decisions()]
                         selected = decision_values[0]
                         break
-                    model.unlock()
 
-                mask = np.asarray(selected, dtype=bool) # e.g. [False, True, False, False, True, True, False]
-                self._mask = mask
+                self._mask = np.asarray(selected, dtype=bool) # e.g. [False, True, False, False, True, True, False]
 
         except (ConfigFileError, SolverAuthenticationError) as e:
             raise RuntimeError(
