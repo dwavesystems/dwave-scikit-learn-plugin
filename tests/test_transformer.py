@@ -33,6 +33,7 @@ from sklearn.pipeline import Pipeline
 from dwave.plugins.sklearn.transformers import SelectFromQuadraticModel
 from dwave.plugins.sklearn.utilities import corrcoef
 
+FEASIBLE_NL_SOLUTION = []
 
 class MockCQM(dimod.ExactCQMSolver):
     def sample_cqm(self, cqm: dimod.CQM, *, time_limit: float, label: str) -> dimod.SampleSet:
@@ -44,8 +45,15 @@ class MockCQM(dimod.ExactCQMSolver):
 
 class MockNL():
     def sample(self, nl: Model, *, time_limit: float, label: str):
-        sampler = LeapHybridNLSampler()
-        return sampler.sample(nl)
+        nl.states.resize(1)
+        results = np.array([])
+
+        for decision in nl.iter_decisions():
+            decision.set_state(0, FEASIBLE_NL_SOLUTION)
+            np.append(results, decision[0])
+
+        mock_results = np.asarray(results, dtype=bool)
+        return mock_results
 
     def min_time_limit(self, nl):
         return 1
@@ -111,6 +119,12 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         (5, "nl"), 
     ])
     def test_fit(self, num_features, solver):
+        global FEASIBLE_NL_SOLUTION
+        if num_features==7:
+            FEASIBLE_NL_SOLUTION = [1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0]
+        elif num_features==5:
+            FEASIBLE_NL_SOLUTION = [1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0]
+
         selector = SelectFromQuadraticModel(num_features=num_features, solver=solver)
 
         # test default numpy
@@ -138,6 +152,9 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         (7, "nl"), 
     ])
     def test_fit_transform(self, num_features, solver):
+        global FEASIBLE_NL_SOLUTION 
+        FEASIBLE_NL_SOLUTION = [1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0]
+
         selector = SelectFromQuadraticModel(num_features=num_features, solver=solver)
 
         # test numpy without fit
@@ -153,6 +170,9 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         (2, "nl"), 
     ])
     def test_pipeline(self, num_features, solver):
+        global FEASIBLE_NL_SOLUTION 
+        FEASIBLE_NL_SOLUTION = [1.0, 1.0, 0.0, 0.0]
+
         X, y = load_iris(return_X_y=True)
 
         clf = Pipeline([
@@ -202,6 +222,9 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         (3, 1, "nl"), 
     ])
     def test_alpha_1(self, num_features, alpha, solver):
+        global FEASIBLE_NL_SOLUTION
+        FEASIBLE_NL_SOLUTION = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
         rng = np.random.default_rng(42)
 
         y = rng.uniform(size=1000)
@@ -234,6 +257,8 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
         (2, "nl"), 
     ])
     def test_gridsearch(self, num_features, solver):
+        global FEASIBLE_NL_SOLUTION
+        FEASIBLE_NL_SOLUTION = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
         rng = np.random.default_rng(42)
         X = rng.uniform(-10, 10, size=(100, 9))
         y = np.asarray(rng.uniform(0, 1, size=100) > 0.5, dtype=int)
@@ -261,6 +286,8 @@ class TestSelectFromQuadraticModel(unittest.TestCase):
             SelectFromQuadraticModel(num_features=num_features, solver=solver).fit(X, y)
 
     def test_fixed_column(self):
+        global FEASIBLE_NL_SOLUTION
+        FEASIBLE_NL_SOLUTION = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0]
         X = np.copy(self.X)
 
         # fix two of the columns
