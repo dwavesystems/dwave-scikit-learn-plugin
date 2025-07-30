@@ -3,7 +3,6 @@ dwave-optimization==0.6.2
 dwave-system==1.32.0
 
 numpy==2.0.2
-
 scikit-learn==1.6.1
 
 reno==3.5.0

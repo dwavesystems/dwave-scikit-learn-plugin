@@ -1,12 +1,8 @@
 version: 2.1
 
-parameters:
-  cache-generation:
-    type: integer
-    default: 1
-
 orbs:
-  win: circleci/windows@2.2
+  ocean: dwave/ocean@1
+  windows: circleci/windows@5.0
 
 environment:
   PIP_PROGRESS_BAR: 'off'
@@ -18,118 +14,52 @@ jobs:
         type: string
 
     docker:
-      - image: cimg/python:<< parameters.python-version >>
+      - image: python:<< parameters.python-version >>
 
     steps:
       - checkout
 
-      - restore_cache: &restore-cache-env
-          key: v<< pipeline.parameters.cache-generation >>-pip-{{ checksum "requirements.txt" }}-{{ checksum "tests/requirements.txt" }}-{{ .Environment.CIRCLE_JOB }}
+      - ocean/pip-install:
+          requirements: tests/requirements.txt
+          cache: true
 
-      - run: &create-virtualenv
-          name: Create virtual environment
-          command: |
-            python -m venv env
+      - ocean/pip-install:
+          requirements: requirements.txt
+          packages: .
+          cache: false
 
-      - run: &install-requirements
-          name: Install requirements
-          command: |
-            . env/bin/activate
-            pip install -U pip
-            pip install -r requirements.txt
-            pip install -r tests/requirements.txt
-            pip install wheel twine
-
-      - save_cache: &save-cache-env
-          key: v<< pipeline.parameters.cache-generation >>-pip-{{ checksum "requirements.txt" }}-{{ checksum "tests/requirements.txt" }}-{{ .Environment.CIRCLE_JOB }}
-          paths:
-            - env
-
-      - run: &build-package
-          name: Build package
-          command: env/bin/python setup.py sdist bdist_wheel
-
-      - run: &install-package
-          name: Install package
-          command: |
-            . env/bin/activate
-            pip install .
-
-      - run: *install-package
-
-      - run: &run-python-tests
-          name: Run Python tests
-          command: |
-            . env/bin/activate
-            python -m unittest
+      - ocean/coverage-run-unittest
 
   test-macos:
     parameters:
       python-version:
         type: string
-      xcode:
-        type: string
-        default: "15.3.0"
 
-    macos:
-      xcode: << parameters.xcode >>
+    executor:
+      name: ocean/macos
+      xcode: "16.2.0"
 
     steps:
       - checkout
 
-      # install `python-version` and cache it
-      - when:
-          condition:
-            matches:
-              pattern: "^3\\.[123][123456789].*$"
-              value: << parameters.python-version >>
-          steps:
-            - run:
-                name: Update brew to get latest pyenv
-                command: brew update
+      - ocean/brew-install-pyenv:
+          update-homebrew: true
 
-      - run: &brew-install-pyenv
-          name: Install pyenv
-          command: HOMEBREW_NO_AUTO_UPDATE=1 brew install pyenv
+      - ocean/pyenv-install-python:
+          python-version: << parameters.python-version >>
+          cache: true
 
-      - restore_cache: &restore-cache-pyenv
-          keys:
-            - v<< pipeline.parameters.cache-generation >>-pyenv-{{ .Environment.CIRCLE_JOB }}-xcode-<< parameters.xcode >>
+      - ocean/pip-install:
+          requirements: tests/requirements.txt
+          cache: true
 
-      - run: &pyenv-install-python
-          name: Install python
-          command: pyenv install << parameters.python-version >> -s
+      - ocean/pip-install:
+          requirements: requirements.txt
+          packages: .
+          cache: false
 
-      - run: &pyenv-set-system-python
-          name: Set system python
-          command: |
-            echo -e '\n\n# Initialize pyenv' >> ~/.bash_profile
-            echo 'eval "$(pyenv init --path 2>/dev/null || true)"' >> ~/.bash_profile
-            echo 'eval "$(pyenv init -)"' >> ~/.bash_profile
-            pyenv global << parameters.python-version >>
-
-      - save_cache: &save-cache-pyenv
-          key: v<< pipeline.parameters.cache-generation >>-pyenv-{{ .Environment.CIRCLE_JOB }}-xcode-<< parameters.xcode >>
-          paths:
-            - ~/.pyenv
-
-      # install dependencies and cache them
-      - restore_cache: *restore-cache-env
-
-      - run: *create-virtualenv
-
-      - run: *install-requirements
-
-      - save_cache: *save-cache-env
-
-      
-      #- run: &install-package-macos
-      #    name: Install package
-      #    command: env/bin/pip install .
-      #- run: *install-package-macos
-      - run: *install-package
-
-      - run: *run-python-tests
+      - ocean/coverage-run-unittest:
+          upload-coverage: true
 
   test-windows:
     parameters:
@@ -137,93 +67,77 @@ jobs:
         type: string
 
     executor:
-      name: win/default
+      name: windows/default
 
     steps:
       - checkout
 
-      - restore_cache:
-          keys:
-            - v<< pipeline.parameters.cache-generation >>-nuget-python-<< parameters.python-version >>-{{ .Environment.CIRCLE_JOB }}
+      - ocean/nuget-install-python:
+          python-version: << parameters.python-version >>
+          cache: true
 
-      - run:
-          name: Install python and create virtualenv
-          command: |
-            nuget install python -Version << parameters.python-version >>
-            python.<< parameters.python-version >>\tools\python -m venv env
+      - ocean/pip-install:
+          requirements: tests/requirements.txt
+          cache: false
 
-      - save_cache:
-          key: v<< pipeline.parameters.cache-generation >>-nuget-python-<< parameters.python-version >>-{{ .Environment.CIRCLE_JOB }}
-          paths:
-            - python.<< parameters.python-version >>
+      - ocean/pip-install:
+          requirements: requirements.txt
+          packages: .
+          cache: false
 
-      - run:
-          name: Install requirements
-          command: |
-            env\Scripts\activate.ps1
-            pip install -U pip
-            pip install -r requirements.txt -r tests\requirements.txt
+      - ocean/coverage-run-unittest
 
-      - run:
-          name: Install package
-          command: |
-            env\Scripts\activate.ps1
-            pip install .
-
-      - run:
-          name: Run tests
-          command: |
-            env\Scripts\activate.ps1
-            python -m unittest discover
-
-  pypi-deploy:
+  deploy:
     docker:
-      - image: cimg/python:3.9
+      - image: python:3.12
 
     steps:
       - checkout
 
-      - restore_cache: *restore-cache-env
-
-      - run: *create-virtualenv
-
-      - run: *install-requirements
-
-      - save_cache: *save-cache-env
-
-      - run: *build-package
-
-      - store_artifacts:
-          path: ./dist
+      - run:
+          name: create virtualenv
+          command: |
+            python -m venv env
 
       - run:
-          name: Upload package to PyPI
-          command: env/bin/twine upload -u "$PYPI_USERNAME" -p "$PYPI_PASSWORD" --skip-existing ./dist/*
+          name: build sdist and bdist
+          command: |
+            . env/bin/activate
+            pip install -U pip setuptools wheel
+            python setup.py sdist
+            python setup.py bdist_wheel
 
+      - run:
+          name: upload
+          command: |
+            . env/bin/activate
+            pip install twine
+            twine check dist/*
+            twine upload -u "$PYPI_USERNAME" -p "$PYPI_PASSWORD" --skip-existing ./dist/*
 
 workflows:
+  version: 2
+
   test:
     jobs:
       - test-linux:
-          name: test-linux-<< matrix.python-version >>
           matrix:
             parameters:
-              python-version: &python-versions [3.9.2, 3.10.0, 3.11.0, 3.12.0, 3.13.0]
-
+              python-version: &python-versions ["3.9.21", "3.10.16", "3.11.11", "3.12.8", "3.13.1"]
       - test-macos:
           matrix:
             parameters:
               python-version: *python-versions
-
       - test-windows:
           matrix:
             parameters:
-              python-version: *python-versions
+              # note: limit to versions available via nuget
+              python-version: &python-versions-windows ["3.9.13", "3.10.11", "3.11.9", "3.12.8", "3.13.1"]
 
   deploy:
     jobs:
-      - pypi-deploy:
-          filters:
+      - deploy:
+          filters: &on-tag-push
             tags:
               only: /^[0-9]+(\.[0-9]+)*((\.dev|rc)([0-9]+)?)?$/
             branches:
