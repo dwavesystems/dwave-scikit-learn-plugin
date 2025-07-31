@@ -56,9 +56,6 @@ class MockNL():
         mock_results = np.asarray(results, dtype=bool)
         return concurrent.futures.Future()
 
-    def min_time_limit(self, nl):
-        return 1
-
 
 @unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridNLSampler", MockNL)
 @unittest.mock.patch("dwave.plugins.sklearn.transformers.LeapHybridCQMSampler", MockCQM)
