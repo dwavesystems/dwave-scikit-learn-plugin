@@ -68,7 +68,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         method: str = "correlation",  # undocumented until there is another supported
         num_features: int = 10,
         time_limit: typing.Optional[float] = None,
-        solver: str = "cqm"
+        solver: str = "cqm",
     ):
         if not 0 <= alpha <= 1:
             raise ValueError(f"alpha must be between 0 and 1, given {alpha}")
@@ -295,8 +295,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 String containing either "cqm" or "nl" to decide which solver creation method to use. Defaults to "cqm"
 
         Returns:
-            A constrained quadratic model
-            OR a nonlinear model, the binary list, and a ndarray
+            A constrained quadratic model or a nonlinear model, the binary list, and a ndarray
 
         .. [Milne et al.] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
             Selection in Credit Scoring and Classification Using a Quantum Annealer."
@@ -437,7 +436,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 sampler = LeapHybridNLSampler()
 
                 # time_limit is checked by the LeapHybridNLSampler
-                sampler.sample(model, time_limit=self.time_limit, label='scikit-learn Plug-In: NL')
+                _ = sampler.sample(model, time_limit=self.time_limit, label='scikit-learn Plug-In: NL')
 
                 # Get the index position of chosen features
                 # Example Given (e.g.) of 6 features to choose 3
