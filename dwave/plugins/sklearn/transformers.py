@@ -352,6 +352,26 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 return SelectFromQuadraticModel._create_nl_model(correlations=correlations, X=X, alpha=alpha, num_features=num_features, strict=strict)
             raise ValueError(f"Solver parameter must be equal to 'nl' or 'cqm'. Received solver parameter: {solver}")
 
+    @staticmethod
+    def correlation_cqm(X: npt.ArrayLike,
+        y: npt.ArrayLike,
+        *,
+        alpha: float,
+        num_features: int,
+        strict: bool = True,
+    ) -> dimod.ConstrainedQuadraticModel:
+        return SelectFromQuadraticModel.correlation(X=X, y=y, num_features=num_features, alpha=alpha, solver="cqm")
+    
+    @staticmethod
+    def correlation_nl(X: npt.ArrayLike,
+        y: npt.ArrayLike,
+        *,
+        alpha: float,
+        num_features: int,
+        strict: bool = True,
+    ) -> dimod.ConstrainedQuadraticModel:
+        return SelectFromQuadraticModel.correlation(X=X, y=y, num_features=num_features, alpha=alpha, solver="nl")
+
     def fit(
         self,
         X: npt.ArrayLike,
@@ -441,10 +461,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 # Get the index position of chosen features
                 # Example Given (e.g.) of 6 features to choose 3
                 with model.lock():
-                    for dec_index in range(num_features):
-                        decision_values = [sym.state(dec_index) for sym in model.iter_decisions()]
-                        selected = decision_values[0]
-                        break
+                    selected = next(model.iter_decisions()).state(0)
 
                 self._mask = np.asarray(selected, dtype=bool) # e.g. [False, True, False, False, True, True, False]
 
