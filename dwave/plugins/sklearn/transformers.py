@@ -257,6 +257,12 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
         nl.minimize(nl.constant(2.0) * nl.quadratic_model(x_binary, quadratic=(q3, [q1, q2]), linear=linear))
         return nl
 
+    @typing.overload
+    def correlation(X: npt.ArrayLike, y: npt.ArrayLike, *, solver: Literal["cqm"], **kwargs) -> dimod.ConstrainedQuadraticModel: ...
+
+    @typing.overload
+    def correlation(X: npt.ArrayLike, y: npt.ArrayLike, *, solver: Literal["nl"], **kwargs) -> Model: ...
+
     @staticmethod
     def correlation(
         X: npt.ArrayLike,
