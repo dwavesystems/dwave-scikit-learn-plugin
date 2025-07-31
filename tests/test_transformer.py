@@ -12,6 +12,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
+import concurrent.futures
 import unittest
 import unittest.mock
 import warnings
@@ -53,7 +54,7 @@ class MockNL():
             np.append(results, decision[0])
 
         mock_results = np.asarray(results, dtype=bool)
-        return mock_results
+        return concurrent.futures.Future()
 
     def min_time_limit(self, nl):
         return 1
