@@ -47,13 +47,10 @@ class MockCQM(dimod.ExactCQMSolver):
 class MockNL():
     def sample(self, nl: Model, *, time_limit: float, label: str):
         nl.states.resize(1)
-        results = np.array([])
 
         for decision in nl.iter_decisions():
             decision.set_state(0, FEASIBLE_NL_SOLUTION)
-            np.append(results, decision[0])
 
-        mock_results = np.asarray(results, dtype=bool)
         return concurrent.futures.Future()
 
 
