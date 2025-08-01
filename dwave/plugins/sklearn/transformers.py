@@ -301,7 +301,7 @@ class SelectFromQuadraticModel(SelectorMixin, BaseEstimator):
                 String containing either "cqm" or "nl" to decide which solver creation method to use. Defaults to "cqm"
 
         Returns:
-            A constrained quadratic model or a nonlinear model, the binary list, and a ndarray
+            A constrained quadratic model or a nonlinear model.
 
         .. [Milne et al.] Milne, Andrew, Maxwell Rounds, and Phil Goddard. 2017. "Optimal Feature
             Selection in Credit Scoring and Classification Using a Quantum Annealer."
