@@ -28,20 +28,22 @@ A minimal example of using the plugin to select 20 of 30 features of an `sklearn
 >>> X, y = load_breast_cancer(return_X_y=True)
 >>> X.shape
 (569, 30)
->>> X_new = SelectFromQuadraticModel(num_features=20).fit_transform(X, y)
+>>> # solver can also be equal to "cqm"
+>>> X_new = SelectFromQuadraticModel(num_features=20, solver="nl").fit_transform(X, y)
 >>> X_new.shape
 (569, 20)
 ```
 
-For large problems, the default runtime may be insufficient. You can use the CQM solver's 
-[`min_time_limit`](https://docs.ocean.dwavesys.com/en/stable/docs_system/reference/generated/dwave.system.samplers.LeapHybridCQMSampler.min_time_limit.html)
+For large problems, the default runtime may be insufficient. You can use the CQM solver's [`time_limit`](https://docs.dwavequantum.com/en/latest/industrial_optimization/solver_cqm_parameters.html#time-limit) or Nonlinear (NL) solver's
+[`time_limit`](https://docs.dwavequantum.com/en/latest/industrial_optimization/solver_nl_parameters.html#time-limit)
 method to find the minimum accepted runtime for your problem; alternatively, simply submit as above 
 and check the returned error message for the required runtime. 
 
 The feature selector can be re-instantiated with a longer time limit.
 
 ```python
->>> X_new = SelectFromQuadraticModel(num_features=20, time_limit=200).fit_transform(X, y)
+>>> # solver can also be equal to "nl"
+>>> X_new = SelectFromQuadraticModel(num_features=20, time_limit=200, solver="cqm").fit_transform(X, y)
 ```
 
 ### Tuning
@@ -66,8 +68,9 @@ submit many problems to the hybrid solver.**
 >>> num_features = X.shape[1]
 >>> searchspace = np.linspace(1, num_features, num=5, dtype=int, endpoint=True)
 ...
+>>> # solver can also be equal to "cqm"
 >>> pipe = Pipeline([
->>>   ('feature_selection', SelectFromQuadraticModel()),
+>>>   ('feature_selection', SelectFromQuadraticModel(solver="nl")),
 >>>   ('classification', RandomForestClassifier())
 >>> ])
 ...
