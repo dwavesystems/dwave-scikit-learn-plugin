@@ -1,0 +1,54 @@
+[build-system]
+requires = [
+    "setuptools>=77.0.3",   # PEP 639
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dwave-scikit-learn-plugin"
+dynamic = ["version"]
+authors = [
+    {name = "D-Wave Inc.", email = "tools@dwavesys.com"},
+]
+description = "A plugin to scikit-learn for quantum-classical hybrid solving."
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">= 3.9"
+dependencies = [
+    "dimod>=0.12.20",
+    "dwave-optimization>=0.6.2",
+    "dwave-system>=1.32.0",
+    "numpy>=2.0.2",
+    "scikit-learn>=1.6.1",
+]
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+
+[project.urls]
+Homepage = "https://github.com/dwavesystems/dwave-scikit-learn-plugin"
+Download = "https://github.com/dwavesystems/dwave-scikit-learn-plugin/releases"
+
+[tool.setuptools.packages.find]
+include = ["dwave.*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "dwave.plugins.sklearn.__version__"}
+
+[tool.coverage.run]
+omit = ["tests/*"]
+source = ["dwave/plugins/sklearn"]
+
+[tool.coverage.report]
+include_namespace_packages = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
